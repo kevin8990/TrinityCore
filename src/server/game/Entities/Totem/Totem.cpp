@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2005-2009 MaNGOS <http://getmangos.com/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,23 +16,22 @@
  */
 
 #include "Totem.h"
-#include "Log.h"
 #include "Group.h"
-#include "ObjectMgr.h"
-#include "Opcodes.h"
+#include "Log.h"
+#include "Map.h"
 #include "Player.h"
-#include "SpellMgr.h"
+#include "SmartEnum.h"
+#include "SpellHistory.h"
 #include "SpellInfo.h"
-#include "WorldPacket.h"
+#include "SpellMgr.h"
+#include "TotemPackets.h"
 
-Totem::Totem(SummonPropertiesEntry const* properties, Unit* owner) : Minion(properties, owner, false)
+Totem::Totem(SummonPropertiesEntry const* properties, Unit* owner) : Minion(properties, owner, false), m_type(TOTEM_PASSIVE), m_duration(0ms)
 {
     m_unitTypeMask |= UNIT_MASK_TOTEM;
-    m_duration = 0;
-    m_type = TOTEM_PASSIVE;
 }
 
-void Totem::Update(uint32 time)
+void Totem::Update(uint32 diff)
 {
     if (!GetOwner()->IsAlive() || !IsAlive())
     {
@@ -41,56 +39,58 @@ void Totem::Update(uint32 time)
         return;
     }
 
-    if (m_duration <= time)
+    if (m_duration <= Milliseconds(diff))
     {
         UnSummon();                                         // remove self
         return;
     }
-    else
-        m_duration -= time;
 
-    Creature::Update(time);
+    m_duration -= Milliseconds(diff);
+
+    Creature::Update(diff);
 }
 
-void Totem::InitStats(uint32 duration)
+void Totem::InitStats(WorldObject* summoner, Milliseconds duration)
 {
     // client requires SMSG_TOTEM_CREATED to be sent before adding to world and before removing old totem
-    if (GetOwner()->GetTypeId() == TYPEID_PLAYER
-            && m_Properties->Slot >= SUMMON_SLOT_TOTEM
-            && m_Properties->Slot < MAX_TOTEM_SLOT)
+    if (Player* owner = GetOwner()->ToPlayer())
     {
-        WorldPacket data(SMSG_TOTEM_CREATED, 1 + 8 + 4 + 4);
-        data << uint8(m_Properties->Slot - 1);
-        data << uint64(GetGUID());
-        data << uint32(duration);
-        data << uint32(GetUInt32Value(UNIT_CREATED_BY_SPELL));
-        GetOwner()->ToPlayer()->SendDirectMessage(&data);
+        int32 slot = m_Properties->Slot;
+        if (slot == SUMMON_SLOT_ANY_TOTEM)
+            slot = FindUsableTotemSlot(owner);
+
+        if (slot >= SUMMON_SLOT_TOTEM && slot < MAX_TOTEM_SLOT)
+        {
+            WorldPackets::Totem::TotemCreated data;
+            data.Totem = GetGUID();
+            data.Slot = slot - SUMMON_SLOT_TOTEM;
+            data.Duration = duration;
+            data.SpellID = m_unitData->CreatedBySpell;
+            owner->SendDirectMessage(data.Write());
+        }
 
         // set display id depending on caster's race
-        SetDisplayId(GetOwner()->GetModelForTotem(PlayerTotemType(m_Properties->Id)));
+        if (uint32 totemDisplayId = sSpellMgr->GetModelForTotem(m_unitData->CreatedBySpell, owner->GetRace()))
+            SetDisplayId(totemDisplayId);
+        else
+            TC_LOG_DEBUG("misc", "Totem with entry {}, owned by player {}, does not have a specialized model for spell {} and race {}. Set to default.",
+                         GetEntry(), owner->GetGUID().ToString(), *m_unitData->CreatedBySpell, EnumUtils::ToTitle(Races(owner->GetRace())));
     }
 
-    Minion::InitStats(duration);
+    Minion::InitStats(summoner, duration);
 
     // Get spell cast by totem
-    if (SpellInfo const* totemSpell = sSpellMgr->GetSpellInfo(GetSpell()))
+    if (SpellInfo const* totemSpell = sSpellMgr->GetSpellInfo(GetSpell(), GetMap()->GetDifficultyID()))
         if (totemSpell->CalcCastTime())   // If spell has cast time -> its an active totem
             m_type = TOTEM_ACTIVE;
 
-    if (GetEntry() == SENTRY_TOTEM_ENTRY)
-        SetReactState(REACT_AGGRESSIVE);
-
     m_duration = duration;
-
-    SetLevel(GetOwner()->getLevel());
 }
 
-void Totem::InitSummon()
+void Totem::InitSummon(WorldObject* /*summoner*/)
 {
     if (m_type == TOTEM_PASSIVE && GetSpell())
-    {
         CastSpell(this, GetSpell(), true);
-    }
 
     // Some totems can have both instant effect and passive spell
     if (GetSpell(1))
@@ -101,7 +101,7 @@ void Totem::UnSummon(uint32 msTime)
 {
     if (msTime)
     {
-        m_Events.AddEvent(new ForcedUnsummonDelayEvent(*this), m_Events.CalculateTime(msTime));
+        m_Events.AddEvent(new ForcedUnsummonDelayEvent(*this), m_Events.CalculateTime(Milliseconds(msTime)));
         return;
     }
 
@@ -113,31 +113,27 @@ void Totem::UnSummon(uint32 msTime)
     {
         if (GetOwner()->m_SummonSlot[i] == GetGUID())
         {
-            GetOwner()->m_SummonSlot[i] = 0;
+            GetOwner()->m_SummonSlot[i].Clear();
             break;
         }
     }
 
     GetOwner()->RemoveAurasDueToSpell(GetSpell(), GetGUID());
 
-    // Remove Sentry Totem Aura
-    if (GetEntry() == SENTRY_TOTEM_ENTRY)
-        GetOwner()->RemoveAurasDueToSpell(SENTRY_TOTEM_SPELLID);
-
-    //remove aura all party members too
+    // remove aura all party members too
     if (Player* owner = GetOwner()->ToPlayer())
     {
         owner->SendAutoRepeatCancel(this);
 
-        if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(GetUInt32Value(UNIT_CREATED_BY_SPELL)))
-            owner->SendCooldownEvent(spell, 0, NULL, false);
+        if (SpellInfo const* spell = sSpellMgr->GetSpellInfo(m_unitData->CreatedBySpell, GetMap()->GetDifficultyID()))
+            GetSpellHistory()->SendCooldownEvent(spell, 0, nullptr, false);
 
         if (Group* group = owner->GetGroup())
         {
-            for (GroupReference* itr = group->GetFirstMember(); itr != NULL; itr = itr->next())
+            for (GroupReference* itr = group->GetFirstMember(); itr != nullptr; itr = itr->next())
             {
                 Player* target = itr->GetSource();
-                if (target && group->SameSubGroup(owner, target))
+                if (target && target->IsInMap(owner) && group->SameSubGroup(owner, target))
                     target->RemoveAurasDueToSpell(GetSpell(), GetGUID());
             }
         }
@@ -146,13 +142,18 @@ void Totem::UnSummon(uint32 msTime)
     AddObjectToRemoveList();
 }
 
-bool Totem::IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index) const
+bool Totem::IsImmunedToSpellEffect(SpellInfo const* spellInfo, SpellEffectInfo const& spellEffectInfo, WorldObject const* caster,
+    bool requireImmunityPurgesEffectAttribute /*= false*/) const
 {
-    /// @todo possibly all negative auras immune?
-    if (GetEntry() == 5925)
-        return false;
+    // immune to all positive spells, except of stoneclaw totem absorb and sentry totem bind sight
+    // totems positive spells have unit_caster target
+    if (spellEffectInfo.Effect != SPELL_EFFECT_DUMMY &&
+        spellEffectInfo.Effect != SPELL_EFFECT_SCRIPT_EFFECT &&
+        spellInfo->IsPositive() && spellEffectInfo.TargetA.GetTarget() != TARGET_UNIT_CASTER &&
+        spellEffectInfo.TargetA.GetCheckType() != TARGET_CHECK_ENTRY)
+        return true;
 
-    switch (spellInfo->Effects[index].ApplyAuraName)
+    switch (spellEffectInfo.ApplyAuraName)
     {
         case SPELL_AURA_PERIODIC_DAMAGE:
         case SPELL_AURA_PERIODIC_LEECH:
@@ -163,5 +164,5 @@ bool Totem::IsImmunedToSpellEffect(SpellInfo const* spellInfo, uint32 index) con
             break;
     }
 
-    return Creature::IsImmunedToSpellEffect(spellInfo, index);
+    return Creature::IsImmunedToSpellEffect(spellInfo, spellEffectInfo, caster, requireImmunityPurgesEffectAttribute);
 }

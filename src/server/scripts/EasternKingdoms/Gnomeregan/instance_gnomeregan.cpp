@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,16 +16,25 @@
  */
 
 #include "ScriptMgr.h"
-#include "InstanceScript.h"
+#include "Creature.h"
+#include "GameObject.h"
 #include "gnomeregan.h"
-#include "Player.h"
+#include "InstanceScript.h"
+#include "Map.h"
 
-#define    MAX_ENCOUNTER  1
+static constexpr DungeonEncounterData Encounters[] =
+{
+    { DATA_BLASTMASTER_EVENT, { { 379 } } },
+    { DATA_VICIOUS_FALLOUT  , { { 378 } } },
+    { DATA_ELECTROCUTIONER  , { { 380 } } },
+    { DATA_CROWD_PUMMELER   , { { 381 } } },
+    { DATA_THERMAPLUGG      , { { 382 } } },
+};
 
 class instance_gnomeregan : public InstanceMapScript
 {
 public:
-    instance_gnomeregan() : InstanceMapScript("instance_gnomeregan", 90) { }
+    instance_gnomeregan() : InstanceMapScript(GNOScriptName, 90) { }
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override
     {
@@ -34,54 +43,25 @@ public:
 
     struct instance_gnomeregan_InstanceMapScript : public InstanceScript
     {
-        instance_gnomeregan_InstanceMapScript(Map* map) : InstanceScript(map)
+        instance_gnomeregan_InstanceMapScript(InstanceMap* map) : InstanceScript(map)
         {
+            SetHeaders(DataHeader);
+            SetBossNumber(MAX_ENCOUNTER);
+            LoadDungeonEncounterData(Encounters);
         }
 
-        uint32 m_auiEncounter[MAX_ENCOUNTER];
+        ObjectGuid uiCaveInLeftGUID;
+        ObjectGuid uiCaveInRightGUID;
 
-        uint64 uiCaveInLeftGUID;
-        uint64 uiCaveInRightGUID;
-
-        uint64 uiBastmasterEmiShortfuseGUID;
-
-        void Initialize() override
-        {
-            memset(&m_auiEncounter, 0, sizeof(m_auiEncounter));
-
-            uiCaveInLeftGUID                = 0;
-            uiCaveInRightGUID               = 0;
-
-            uiBastmasterEmiShortfuseGUID    = 0;
-        }
-
-        void Load(const char* in) override
-        {
-            if (!in)
-            {
-                OUT_LOAD_INST_DATA_FAIL;
-                return;
-            }
-
-            OUT_LOAD_INST_DATA(in);
-
-            std::istringstream loadStream(in);
-            loadStream >> m_auiEncounter[0];
-
-            for (uint8 i = 0; i < MAX_ENCOUNTER; ++i)
-            {
-                if (m_auiEncounter[i] == IN_PROGRESS)
-                    m_auiEncounter[i] = NOT_STARTED;
-            }
-
-            OUT_LOAD_INST_DATA_COMPLETE;
-        }
+        ObjectGuid uiBlastmasterEmiShortfuseGUID;
 
         void OnCreatureCreate(Creature* creature) override
         {
             switch (creature->GetEntry())
             {
-                case NPC_BLASTMASTER_EMI_SHORTFUSE: uiBastmasterEmiShortfuseGUID = creature->GetGUID(); break;
+                case NPC_BLASTMASTER_EMI_SHORTFUSE:
+                    uiBlastmasterEmiShortfuseGUID = creature->GetGUID();
+                    break;
             }
         }
 
@@ -91,48 +71,44 @@ public:
             {
                 case GO_CAVE_IN_LEFT:
                     uiCaveInLeftGUID = go->GetGUID();
-                    if (m_auiEncounter[0] == DONE || m_auiEncounter[0] == NOT_STARTED)
-                        HandleGameObject(0, false, go);
                     break;
                 case GO_CAVE_IN_RIGHT:
                     uiCaveInRightGUID = go->GetGUID();
-                    if (m_auiEncounter[0] == DONE || m_auiEncounter[0] == NOT_STARTED)
-                        HandleGameObject(0, false, go);
                     break;
             }
         }
 
-        void SetData(uint32 uiType, uint32 uiData) override
+        void OnUnitDeath(Unit* unit) override
         {
-            switch (uiType)
-            {
-                case TYPE_EVENT:
-                    m_auiEncounter[0] = uiData;
-                    if (uiData == DONE)
-                        SaveToDB();
-                    break;
-            }
+            Creature* creature = unit->ToCreature();
+            if (creature)
+                switch (creature->GetEntry())
+                {
+                    case NPC_VICIOUS_FALLOUT:
+                        SetBossState(DATA_VICIOUS_FALLOUT, DONE);
+                        break;
+                    case NPC_ELECTROCUTIONER:
+                        SetBossState(DATA_ELECTROCUTIONER, DONE);
+                        break;
+                    case NPC_CROWD_PUMMELER:
+                        SetBossState(DATA_CROWD_PUMMELER, DONE);
+                        break;
+                    case NPC_MEKGINEER:
+                        SetBossState(DATA_THERMAPLUGG, DONE);
+                        break;
+                }
         }
 
-        uint32 GetData(uint32 uiType) const override
-        {
-            switch (uiType)
-            {
-                case TYPE_EVENT:    return m_auiEncounter[0];
-            }
-            return 0;
-        }
-
-        uint64 GetData64(uint32 uiType) const override
+        ObjectGuid GetGuidData(uint32 uiType) const override
         {
             switch (uiType)
             {
                 case DATA_GO_CAVE_IN_LEFT:              return uiCaveInLeftGUID;
                 case DATA_GO_CAVE_IN_RIGHT:             return uiCaveInRightGUID;
-                case DATA_NPC_BASTMASTER_EMI_SHORTFUSE: return uiBastmasterEmiShortfuseGUID;
+                case DATA_NPC_BASTMASTER_EMI_SHORTFUSE: return uiBlastmasterEmiShortfuseGUID;
             }
 
-            return 0;
+            return ObjectGuid::Empty;
         }
     };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,8 +16,8 @@
  */
 
 #include "ScriptMgr.h"
-#include "ScriptedCreature.h"
 #include "blackfathom_deeps.h"
+#include "ScriptedCreature.h"
 
 enum Spells
 {
@@ -28,75 +28,60 @@ enum Spells
 enum Events
 {
     EVENT_POISON_CLOUD     = 1,
-    EVENT_FRENZIED_RAGE    = 2
+    EVENT_FRENZIED_RAGE
 };
 
-class boss_aku_mai : public CreatureScript
+struct boss_aku_mai : public BossAI
 {
-public:
-    boss_aku_mai() : CreatureScript("boss_aku_mai") { }
-
-    struct boss_aku_maiAI : public BossAI
+    boss_aku_mai(Creature* creature) : BossAI(creature, DATA_AKU_MAI)
     {
-        boss_aku_maiAI(Creature* creature) : BossAI(creature, TYPE_AKU_MAI) { }
-
-        void Reset() override
-        {
-            IsEnraged = false;
-            _Reset();
-        }
-
-        void EnterCombat(Unit* /*who*/) override
-        {
-            events.ScheduleEvent(EVENT_POISON_CLOUD, urand(5000, 9000));
-            _EnterCombat();
-        }
-
-        void JustDied(Unit* /*killer*/) override
-        {
-            _JustDied();
-        }
-
-        void UpdateAI(uint32 diff) override
-        {
-            if (!UpdateVictim())
-                return;
-
-            events.Update(diff);
-
-            if (!IsEnraged && HealthBelowPct(30))
-                events.ScheduleEvent(EVENT_FRENZIED_RAGE, 100);
-
-            while (uint32 eventId = events.ExecuteEvent())
-            {
-                switch (eventId)
-                {
-                    case EVENT_POISON_CLOUD:
-                        DoCastVictim(SPELL_POISON_CLOUD);
-                        events.ScheduleEvent(EVENT_POISON_CLOUD, urand(25000, 50000));
-                        break;
-                    case EVENT_FRENZIED_RAGE:
-                        DoCast(me, SPELL_FRENZIED_RAGE);
-                        IsEnraged = true;
-                        break;
-                    default:
-                        break;
-                }
-            }
-            DoMeleeAttackIfReady();
-        }
-
-        private:
-            bool IsEnraged;
-    };
-
-    CreatureAI* GetAI(Creature* creature) const override
-    {
-        return new boss_aku_maiAI(creature);
+        Initialize();
     }
+
+    void Initialize()
+    {
+        IsEnraged = false;
+    }
+
+    void Reset() override
+    {
+        Initialize();
+        _Reset();
+    }
+
+    void JustEngagedWith(Unit* who) override
+    {
+        BossAI::JustEngagedWith(who);
+        events.ScheduleEvent(EVENT_POISON_CLOUD, 5s, 9s);
+    }
+
+    void DamageTaken(Unit* /*atacker*/, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        if (!IsEnraged && me->HealthBelowPctDamaged(30, damage))
+        {
+            DoCast(me, SPELL_FRENZIED_RAGE);
+            IsEnraged = true;
+        }
+    }
+
+    void ExecuteEvent(uint32 eventId) override
+    {
+        switch (eventId)
+        {
+            case EVENT_POISON_CLOUD:
+                DoCastVictim(SPELL_POISON_CLOUD);
+                events.ScheduleEvent(EVENT_POISON_CLOUD, 25s, 50s);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private:
+        bool IsEnraged;
 };
 
 void AddSC_boss_aku_mai()
 {
-    new boss_aku_mai();
+    RegisterBlackfathomDeepsCreatureAI(boss_aku_mai);
 }

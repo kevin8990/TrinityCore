@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2005-2009 MaNGOS <http://getmangos.com/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -20,9 +19,12 @@
 #define __TRINITY_VEHICLEDEFINES_H
 
 #include "Define.h"
+#include "Duration.h"
 #include <vector>
 #include <map>
 
+class Map;
+class WorldObject;
 struct VehicleSeatEntry;
 
 enum PowerType
@@ -32,7 +34,29 @@ enum PowerType
     POWER_HEAT                                   = 101,
     POWER_OOZE                                   = 121,
     POWER_BLOOD                                  = 141,
-    POWER_WRATH                                  = 142
+    POWER_WRATH                                  = 142,
+    POWER_ARCANE_ENERGY                          = 143,
+    POWER_LIFE_ENERGY                            = 144,
+    POWER_SUN_ENERGY                             = 145,
+    POWER_SWING_VELOCITY                         = 146,
+    POWER_SHADOWFLAME_ENERGY                     = 147,
+    POWER_BLUE_POWER                             = 148,
+    POWER_PURPLE_POWER                           = 149,
+    POWER_GREEN_POWER                            = 150,
+    POWER_ORANGE_POWER                           = 151,
+    POWER_ENERGY_2                               = 153,
+    POWER_ARCANEENERGY                           = 161,
+    POWER_WIND_POWER_1                           = 162,
+    POWER_WIND_POWER_2                           = 163,
+    POWER_WIND_POWER_3                           = 164,
+    POWER_FUEL                                   = 165,
+    POWER_SUN_POWER                              = 166,
+    POWER_TWILIGHT_ENERGY                        = 169,
+    POWER_VENOM                                  = 174,
+    POWER_ORANGE_POWER_2                         = 176,
+    POWER_CONSUMING_FLAME                        = 177,
+    POWER_PYROCLASTIC_FRENZY                     = 178,
+    POWER_FLASHFIRE                              = 179,
 };
 
 enum VehicleFlags
@@ -44,7 +68,8 @@ enum VehicleFlags
     VEHICLE_FLAG_FULLSPEEDPITCHING               = 0x00000020,           // Sets MOVEFLAG2_FULLSPEEDPITCHING
     VEHICLE_FLAG_CUSTOM_PITCH                    = 0x00000040,           // If set use pitchMin and pitchMax from DBC, otherwise pitchMin = -pi/2, pitchMax = pi/2
     VEHICLE_FLAG_ADJUST_AIM_ANGLE                = 0x00000400,           // Lua_IsVehicleAimAngleAdjustable
-    VEHICLE_FLAG_ADJUST_AIM_POWER                = 0x00000800            // Lua_IsVehicleAimPowerAdjustable
+    VEHICLE_FLAG_ADJUST_AIM_POWER                = 0x00000800,           // Lua_IsVehicleAimPowerAdjustable
+    VEHICLE_FLAG_FIXED_POSITION                  = 0x00200000            // Used for cannons, when they should be rooted
 };
 
 enum VehicleSpells
@@ -53,28 +78,54 @@ enum VehicleSpells
     VEHICLE_SPELL_PARACHUTE                      = 45472
 };
 
+enum class VehicleExitParameters
+{
+    VehicleExitParamNone    = 0, // provided parameters will be ignored
+    VehicleExitParamOffset  = 1, // provided parameters will be used as offset values
+    VehicleExitParamDest    = 2, // provided parameters will be used as absolute destination
+    VehicleExitParamMax
+};
+
 struct PassengerInfo
 {
-    uint64 Guid;
-    bool IsUnselectable;
+    ObjectGuid Guid;
+    bool IsUninteractible;
+    bool IsGravityDisabled;
 
     void Reset()
     {
-        Guid = 0;
-        IsUnselectable = false;
+        Guid.Clear();
+        IsUninteractible = false;
+        IsGravityDisabled = false;
     }
+};
+
+struct VehicleSeatAddon
+{
+    VehicleSeatAddon() { }
+    VehicleSeatAddon(float orientatonOffset, float exitX, float exitY, float exitZ, float exitO, uint8 param) :
+        SeatOrientationOffset(orientatonOffset), ExitParameterX(exitX), ExitParameterY(exitY), ExitParameterZ(exitZ),
+        ExitParameterO(exitO), ExitParameter(VehicleExitParameters(param)) { }
+
+    float SeatOrientationOffset = 0.f;
+    float ExitParameterX = 0.f;
+    float ExitParameterY = 0.f;
+    float ExitParameterZ = 0.f;
+    float ExitParameterO = 0.f;
+    VehicleExitParameters ExitParameter = VehicleExitParameters::VehicleExitParamNone;
 };
 
 struct VehicleSeat
 {
-    explicit VehicleSeat(VehicleSeatEntry const* seatInfo) : SeatInfo(seatInfo)
+    explicit VehicleSeat(VehicleSeatEntry const* seatInfo, VehicleSeatAddon const* seatAddon) : SeatInfo(seatInfo), SeatAddon(seatAddon)
     {
         Passenger.Reset();
     }
 
-    bool IsEmpty() const { return !Passenger.Guid; }
+    bool IsEmpty() const { return Passenger.Guid.IsEmpty(); }
 
     VehicleSeatEntry const* SeatInfo;
+    VehicleSeatAddon const* SeatAddon;
     PassengerInfo Passenger;
 };
 
@@ -89,8 +140,14 @@ struct VehicleAccessory
     uint8 SummonedType;
 };
 
+struct VehicleTemplate
+{
+    Milliseconds DespawnDelay = Milliseconds::zero();
+};
+
 typedef std::vector<VehicleAccessory> VehicleAccessoryList;
-typedef std::map<uint32, VehicleAccessoryList> VehicleAccessoryContainer;
+typedef std::map<ObjectGuid::LowType, VehicleAccessoryList> VehicleAccessoryContainer;
+typedef std::map<uint32, VehicleAccessoryList> VehicleAccessoryTemplateContainer;
 typedef std::map<int8, VehicleSeat> SeatMap;
 
 class TransportBase
@@ -100,13 +157,22 @@ protected:
     virtual ~TransportBase() { }
 
 public:
+    virtual ObjectGuid GetTransportGUID() const = 0;
+
     /// This method transforms supplied transport offsets into global coordinates
-    virtual void CalculatePassengerPosition(float& x, float& y, float& z, float* o = NULL) const = 0;
+    virtual void CalculatePassengerPosition(float& x, float& y, float& z, float* o = nullptr) const = 0;
 
     /// This method transforms supplied global coordinates into local offsets
-    virtual void CalculatePassengerOffset(float& x, float& y, float& z, float* o = NULL) const = 0;
+    virtual void CalculatePassengerOffset(float& x, float& y, float& z, float* o = nullptr) const = 0;
 
-protected:
+    virtual float GetTransportOrientation() const = 0;
+
+    virtual void AddPassenger(WorldObject* passenger) = 0;
+
+    virtual TransportBase* RemovePassenger(WorldObject* passenger) = 0;
+
+    void UpdatePassengerPosition(Map* map, WorldObject* passenger, float x, float y, float z, float o, bool setHomePosition);
+
     static void CalculatePassengerPosition(float& x, float& y, float& z, float* o, float transX, float transY, float transZ, float transO)
     {
         float inx = x, iny = y, inz = z;
@@ -130,6 +196,8 @@ protected:
         y = (iny - inx * std::tan(transO)) / (std::cos(transO) + std::sin(transO) * std::tan(transO));
         x = (inx + iny * std::tan(transO)) / (std::cos(transO) + std::sin(transO) * std::tan(transO));
     }
+
+    virtual int32 GetMapIdForSpawning() const = 0;
 };
 
 #endif

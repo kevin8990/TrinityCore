@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,16 +16,35 @@
  */
 
 #include "ScriptMgr.h"
+#include "GameObject.h"
 #include "InstanceScript.h"
-#include "Player.h"
+#include "Map.h"
+#include "Unit.h"
 #include "scholomance.h"
+
+static constexpr DungeonEncounterData Encounters[] =
+{
+    { DATA_DOCTORTHEOLENKRASTINOV, {{ 458 }} },
+    { DATA_INSTRUCTORMALICIA, {{ 457 }} },
+    { DATA_LADYILLUCIABAROV, {{ 462 }} },
+    { DATA_LORDALEXEIBAROV, {{ 461 }} },
+    { DATA_LOREKEEPERPOLKELT, {{ 459 }} },
+    { DATA_THERAVENIAN, {{ 460 }} },
+    { DATA_DARKMASTERGANDLING, {{ 463 }} },
+    { DATA_KIRTONOS, {{ 451 }} },
+    { DATA_JANDICE_BAROV, {{ 452 }} },
+    { DATA_RATTLEGORE, {{ 453 }} },
+    { DATA_MARDUK_BLACKPOOL, {{ 454 }} },
+    { DATA_VECTUS, {{ 455 }} },
+    { DATA_RAS_FROSTWHISPER, {{ 456 }} },
+};
 
 Position const GandlingLoc = { 180.7712f, -5.428603f, 75.57024f, 1.291544f };
 
 class instance_scholomance : public InstanceMapScript
 {
     public:
-        instance_scholomance() : InstanceMapScript("instance_scholomance", 289) { }
+        instance_scholomance() : InstanceMapScript(ScholomanceScriptName, 289) { }
 
         InstanceScript* GetInstanceScript(InstanceMap* map) const override
         {
@@ -34,18 +53,21 @@ class instance_scholomance : public InstanceMapScript
 
         struct instance_scholomance_InstanceMapScript : public InstanceScript
         {
-            instance_scholomance_InstanceMapScript(Map* map) : InstanceScript(map)
+            instance_scholomance_InstanceMapScript(InstanceMap* map) : InstanceScript(map)
             {
-                SetBossNumber(EncounterCount);
-                GateKirtonosGUID        = 0;
-                GateGandlingGUID        = 0;
-                GateMiliciaGUID         = 0;
-                GateTheolenGUID         = 0;
-                GatePolkeltGUID         = 0;
-                GateRavenianGUID        = 0;
-                GateBarovGUID           = 0;
-                GateIlluciaGUID         = 0;
-                BrazierOfTheHeraldGUID  = 0;
+                SetHeaders(DataHeader);
+                SetBossNumber(MAX_ENCOUNTER);
+                LoadDungeonEncounterData(Encounters);
+            }
+
+            void OnUnitDeath(Unit* unit) override
+            {
+                switch (unit->GetEntry())
+                {
+                    case NPC_RATTLEGORE:        SetBossState(DATA_RATTLEGORE, DONE); break;
+                    case NPC_MARDUK_BLACKPOOL:  SetBossState(DATA_MARDUK_BLACKPOOL, DONE); break;
+                    default: break;
+                }
             }
 
             void OnGameObjectCreate(GameObject* go) override
@@ -106,7 +128,7 @@ class instance_scholomance : public InstanceMapScript
                 return true;
             }
 
-            uint64 GetData64(uint32 type) const override
+            ObjectGuid GetGuidData(uint32 type) const override
             {
                 switch (type)
                 {
@@ -132,7 +154,7 @@ class instance_scholomance : public InstanceMapScript
                         break;
                 }
 
-                return 0;
+                return ObjectGuid::Empty;
             }
 
             bool CheckPreBosses(uint32 bossId) const
@@ -168,61 +190,21 @@ class instance_scholomance : public InstanceMapScript
                     instance->SummonCreature(NPC_DARKMASTER_GANDLING, GandlingLoc);
             }
 
-            std::string GetSaveData() override
+            void AfterDataLoad() override
             {
-                OUT_SAVE_INST_DATA;
-
-                std::ostringstream saveStream;
-                saveStream << "S O " << GetBossSaveData();
-
-                OUT_SAVE_INST_DATA_COMPLETE;
-                return saveStream.str();
-            }
-
-            void Load(const char* str) override
-            {
-                if (!str)
-                {
-                    OUT_LOAD_INST_DATA_FAIL;
-                    return;
-                }
-
-                OUT_LOAD_INST_DATA(str);
-
-                char dataHead1, dataHead2;
-
-                std::istringstream loadStream(str);
-                loadStream >> dataHead1 >> dataHead2;
-
-                if (dataHead1 == 'S' && dataHead2 == 'O')
-                {
-                    for (uint32 i = 0; i < EncounterCount; ++i)
-                    {
-                        uint32 tmpState;
-                        loadStream >> tmpState;
-                        if (tmpState == IN_PROGRESS || tmpState > SPECIAL)
-                            tmpState = NOT_STARTED;
-                        SetBossState(i, EncounterState(tmpState));
-                    }
-
-                    CheckToSpawnGandling();
-                }
-                else
-                    OUT_LOAD_INST_DATA_FAIL;
-
-                OUT_LOAD_INST_DATA_COMPLETE;
+                CheckToSpawnGandling();
             }
 
         protected:
-            uint64 GateKirtonosGUID;
-            uint64 GateGandlingGUID;
-            uint64 GateMiliciaGUID;
-            uint64 GateTheolenGUID;
-            uint64 GatePolkeltGUID;
-            uint64 GateRavenianGUID;
-            uint64 GateBarovGUID;
-            uint64 GateIlluciaGUID;
-            uint64 BrazierOfTheHeraldGUID;
+            ObjectGuid GateKirtonosGUID;
+            ObjectGuid GateGandlingGUID;
+            ObjectGuid GateMiliciaGUID;
+            ObjectGuid GateTheolenGUID;
+            ObjectGuid GatePolkeltGUID;
+            ObjectGuid GateRavenianGUID;
+            ObjectGuid GateBarovGUID;
+            ObjectGuid GateIlluciaGUID;
+            ObjectGuid BrazierOfTheHeraldGUID;
         };
 };
 

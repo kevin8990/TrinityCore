@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -19,7 +19,6 @@
  * Interaction between core and LFGScripts
  */
 
-#include "Common.h"
 #include "SharedDefines.h"
 #include "ScriptMgr.h"
 
@@ -29,7 +28,7 @@ class Group;
 namespace lfg
 {
 
-class LFGPlayerScript : public PlayerScript
+class TC_GAME_API LFGPlayerScript : public PlayerScript
 {
     public:
         LFGPlayerScript();
@@ -40,17 +39,19 @@ class LFGPlayerScript : public PlayerScript
         void OnMapChanged(Player* player) override;
 };
 
-class LFGGroupScript : public GroupScript
+class TC_GAME_API LFGGroupScript : public GroupScript
 {
     public:
         LFGGroupScript();
 
         // Group Hooks
-        void OnAddMember(Group* group, uint64 guid) override;
-        void OnRemoveMember(Group* group, uint64 guid, RemoveMethod method, uint64 kicker, char const* reason) override;
+        void OnAddMember(Group* group, ObjectGuid guid) override;
+        void OnRemoveMember(Group* group, ObjectGuid guid, RemoveMethod method, ObjectGuid kicker, char const* reason) override;
         void OnDisband(Group* group) override;
-        void OnChangeLeader(Group* group, uint64 newLeaderGuid, uint64 oldLeaderGuid) override;
-        void OnInviteMember(Group* group, uint64 guid) override;
+        void OnChangeLeader(Group* group, ObjectGuid newLeaderGuid, ObjectGuid oldLeaderGuid) override;
+        void OnInviteMember(Group* group, ObjectGuid guid) override;
 };
+
+/*keep private*/ void AddSC_LFGScripts();
 
 } // namespace lfg

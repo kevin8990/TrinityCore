@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2006-2009 ScriptDev2 <https://scriptdev2.svn.sourceforge.net/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -25,6 +24,7 @@ EndScriptData */
 
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
+#include "temple_of_ahnqiraj.h"
 
 enum Huhuran
 {
@@ -46,12 +46,28 @@ public:
 
     CreatureAI* GetAI(Creature* creature) const override
     {
-        return new boss_huhuranAI(creature);
+        return GetAQ40AI<boss_huhuranAI>(creature);
     }
 
-    struct boss_huhuranAI : public ScriptedAI
+    struct boss_huhuranAI : public BossAI
     {
-        boss_huhuranAI(Creature* creature) : ScriptedAI(creature) { }
+        boss_huhuranAI(Creature* creature) : BossAI(creature, DATA_HUHURAN)
+        {
+            Initialize();
+        }
+
+        void Initialize()
+        {
+            Frenzy_Timer = urand(25000, 35000);
+            Wyvern_Timer = urand(18000, 28000);
+            Spit_Timer = 8000;
+            PoisonBolt_Timer = 4000;
+            NoxiousPoison_Timer = urand(10000, 20000);
+            FrenzyBack_Timer = 15000;
+
+            Frenzy = false;
+            Berserk = false;
+        }
 
         uint32 Frenzy_Timer;
         uint32 Wyvern_Timer;
@@ -65,19 +81,8 @@ public:
 
         void Reset() override
         {
-            Frenzy_Timer = urand(25000, 35000);
-            Wyvern_Timer = urand(18000, 28000);
-            Spit_Timer = 8000;
-            PoisonBolt_Timer = 4000;
-            NoxiousPoison_Timer = urand(10000, 20000);
-            FrenzyBack_Timer = 15000;
-
-            Frenzy = false;
-            Berserk = false;
-        }
-
-        void EnterCombat(Unit* /*who*/) override
-        {
+            Initialize();
+            _Reset();
         }
 
         void UpdateAI(uint32 diff) override
@@ -99,7 +104,7 @@ public:
             // Wyvern Timer
             if (Wyvern_Timer <= diff)
             {
-                if (Unit* target = SelectTarget(SELECT_TARGET_RANDOM, 0))
+                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0))
                     DoCast(target, SPELL_WYVERNSTING);
                 Wyvern_Timer = urand(15000, 32000);
             } else Wyvern_Timer -= diff;
@@ -143,8 +148,6 @@ public:
                 DoCast(me, SPELL_BERSERK);
                 Berserk = true;
             }
-
-            DoMeleeAttackIfReady();
         }
     };
 

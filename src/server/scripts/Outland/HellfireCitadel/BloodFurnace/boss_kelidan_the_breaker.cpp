@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2006-2009 ScriptDev2 <https://scriptdev2.svn.sourceforge.net/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,9 +16,10 @@
  */
 
 #include "ScriptMgr.h"
-#include "ScriptedCreature.h"
-#include "SpellAuras.h"
 #include "blood_furnace.h"
+#include "ObjectAccessor.h"
+#include "ScriptedCreature.h"
+#include "TemporarySummon.h"
 
 enum Kelidan
 {
@@ -65,8 +65,18 @@ class boss_kelidan_the_breaker : public CreatureScript
         {
             boss_kelidan_the_breakerAI(Creature* creature) : BossAI(creature, DATA_KELIDAN_THE_BREAKER)
             {
-                for (uint8 i = 0; i < 5; ++i)
-                    Channelers[i] = 0;
+                Initialize();
+                Firenova_Timer = 0;
+            }
+
+            void Initialize()
+            {
+                ShadowVolley_Timer = 1000;
+                BurningNova_Timer = 15000;
+                Corruption_Timer = 5000;
+                check_Timer = 0;
+                Firenova = false;
+                addYell = false;
             }
 
             uint32 ShadowVolley_Timer;
@@ -76,25 +86,21 @@ class boss_kelidan_the_breaker : public CreatureScript
             uint32 check_Timer;
             bool Firenova;
             bool addYell;
-            uint64 Channelers[5];
+            ObjectGuid Channelers[5];
 
             void Reset() override
             {
                 _Reset();
-                ShadowVolley_Timer = 1000;
-                BurningNova_Timer = 15000;
-                Corruption_Timer = 5000;
-                check_Timer = 0;
-                Firenova = false;
-                addYell = false;
+                Initialize();
                 SummonChannelers();
                 me->SetReactState(REACT_PASSIVE);
-                me->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_IMMUNE_TO_NPC | UNIT_FLAG_NON_ATTACKABLE);
+                me->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE);
+                me->SetImmuneToAll(true);
             }
 
-            void EnterCombat(Unit* who) override
+            void JustEngagedWith(Unit* who) override
             {
-                _EnterCombat();
+                BossAI::JustEngagedWith(who);
                 Talk(SAY_WAKE);
                 if (me->IsNonMeleeSpellCast(false))
                     me->InterruptNonMeleeSpells(true);
@@ -116,7 +122,7 @@ class boss_kelidan_the_breaker : public CreatureScript
                     addYell = true;
                     Talk(SAY_ADD_AGGRO);
                 }
-                for (uint8 i=0; i<5; ++i)
+                for (uint8 i = 0; i<5; ++i)
                 {
                     Creature* channeler = ObjectAccessor::GetCreature(*me, Channelers[i]);
                     if (who && channeler && !channeler->IsInCombat())
@@ -126,45 +132,46 @@ class boss_kelidan_the_breaker : public CreatureScript
 
             void ChannelerDied(Unit* killer)
             {
-                for (uint8 i=0; i<5; ++i)
+                for (uint8 i = 0; i < 5; ++i)
                 {
                     Creature* channeler = ObjectAccessor::GetCreature(*me, Channelers[i]);
                     if (channeler && channeler->IsAlive())
                         return;
                 }
                 me->SetReactState(REACT_AGGRESSIVE);
-                me->RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_PC | UNIT_FLAG_IMMUNE_TO_NPC | UNIT_FLAG_NON_ATTACKABLE);
+                me->RemoveUnitFlag(UNIT_FLAG_NON_ATTACKABLE);
+                me->SetImmuneToAll(false);
                 if (killer)
                     AttackStart(killer);
             }
 
-            uint64 GetChanneled(Creature* channeler1)
+            ObjectGuid GetChanneled(Creature* channeler1)
             {
                 SummonChannelers();
                 if (!channeler1)
-                    return 0;
+                    return ObjectGuid::Empty;
 
                 uint8 i;
-                for (i=0; i<5; ++i)
+                for (i = 0; i < 5; ++i)
                 {
                     Creature* channeler = ObjectAccessor::GetCreature(*me, Channelers[i]);
                     if (channeler && channeler->GetGUID() == channeler1->GetGUID())
                         break;
                 }
-                return Channelers[(i+2)%5];
+                return Channelers[(i + 2) % 5];
             }
 
             void SummonChannelers()
             {
-                for (uint8 i=0; i<5; ++i)
+                for (uint8 i = 0; i < 5; ++i)
                 {
                     Creature* channeler = ObjectAccessor::GetCreature(*me, Channelers[i]);
                     if (!channeler || channeler->isDead())
-                        channeler = me->SummonCreature(ENTRY_CHANNELER, ShadowmoonChannelers[i][0], ShadowmoonChannelers[i][1], ShadowmoonChannelers[i][2], ShadowmoonChannelers[i][3], TEMPSUMMON_CORPSE_TIMED_DESPAWN, 300000);
+                        channeler = me->SummonCreature(ENTRY_CHANNELER, ShadowmoonChannelers[i][0], ShadowmoonChannelers[i][1], ShadowmoonChannelers[i][2], ShadowmoonChannelers[i][3], TEMPSUMMON_CORPSE_TIMED_DESPAWN, 5min);
                     if (channeler)
                         Channelers[i] = channeler->GetGUID();
                     else
-                        Channelers[i] = 0;
+                        Channelers[i].Clear();
                 }
             }
 
@@ -226,11 +233,7 @@ class boss_kelidan_the_breaker : public CreatureScript
 
                     Talk(SAY_NOVA);
 
-                    if (SpellInfo const* nova = sSpellMgr->GetSpellInfo(SPELL_BURNING_NOVA))
-                    {
-                        if (Aura* aura = Aura::TryRefreshStackOrCreate(nova, MAX_EFFECT_MASK, me, me))
-                            aura->ApplyForTargets();
-                    }
+                    me->AddAura(SPELL_BURNING_NOVA, me);
 
                     if (IsHeroic())
                         DoTeleportAll(me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetOrientation());
@@ -241,8 +244,6 @@ class boss_kelidan_the_breaker : public CreatureScript
                 }
                 else
                     BurningNova_Timer -=diff;
-
-                DoMeleeAttackIfReady();
             }
         };
 
@@ -273,7 +274,17 @@ class npc_shadowmoon_channeler : public CreatureScript
 
         struct npc_shadowmoon_channelerAI : public ScriptedAI
         {
-            npc_shadowmoon_channelerAI(Creature* creature) : ScriptedAI(creature){ }
+            npc_shadowmoon_channelerAI(Creature* creature) : ScriptedAI(creature)
+            {
+                Initialize();
+            }
+
+            void Initialize()
+            {
+                ShadowBolt_Timer = 1000 + rand32() % 1000;
+                MarkOfShadow_Timer = 5000 + rand32() % 2000;
+                check_Timer = 0;
+            }
 
             uint32 ShadowBolt_Timer;
             uint32 MarkOfShadow_Timer;
@@ -281,14 +292,12 @@ class npc_shadowmoon_channeler : public CreatureScript
 
             void Reset() override
             {
-                ShadowBolt_Timer = 1000 + rand32() % 1000;
-                MarkOfShadow_Timer = 5000 + rand32() % 2000;
-                check_Timer = 0;
+                Initialize();
                 if (me->IsNonMeleeSpellCast(false))
                     me->InterruptNonMeleeSpells(true);
             }
 
-            void EnterCombat(Unit* who) override
+            void JustEngagedWith(Unit* who) override
             {
                 if (Creature* Kelidan = me->FindNearestCreature(ENTRY_KELIDAN, 100))
                     ENSURE_AI(boss_kelidan_the_breaker::boss_kelidan_the_breakerAI, Kelidan->AI())->ChannelerEngaged(who);
@@ -299,8 +308,11 @@ class npc_shadowmoon_channeler : public CreatureScript
 
             void JustDied(Unit* killer) override
             {
-               if (Creature* Kelidan = me->FindNearestCreature(ENTRY_KELIDAN, 100))
-                   ENSURE_AI(boss_kelidan_the_breaker::boss_kelidan_the_breakerAI, Kelidan->AI())->ChannelerDied(killer);
+                if (!killer)
+                    return;
+
+                if (Creature* Kelidan = me->FindNearestCreature(ENTRY_KELIDAN, 100))
+                    ENSURE_AI(boss_kelidan_the_breaker::boss_kelidan_the_breakerAI, Kelidan->AI())->ChannelerDied(killer);
             }
 
             void UpdateAI(uint32 diff) override
@@ -310,22 +322,25 @@ class npc_shadowmoon_channeler : public CreatureScript
                     if (check_Timer <= diff)
                     {
                         if (!me->IsNonMeleeSpellCast(false))
+                        {
                             if (Creature* Kelidan = me->FindNearestCreature(ENTRY_KELIDAN, 100))
                             {
-                                uint64 channeler = ENSURE_AI(boss_kelidan_the_breaker::boss_kelidan_the_breakerAI, Kelidan->AI())->GetChanneled(me);
+                                ObjectGuid channeler = ENSURE_AI(boss_kelidan_the_breaker::boss_kelidan_the_breakerAI, Kelidan->AI())->GetChanneled(me);
                                 if (Unit* channeled = ObjectAccessor::GetUnit(*me, channeler))
                                     DoCast(channeled, SPELL_CHANNELING);
                             }
+                        }
                         check_Timer = 5000;
                     }
                     else
                         check_Timer -= diff;
+
                     return;
                 }
 
                 if (MarkOfShadow_Timer <= diff)
                 {
-                    if (Unit* target = SelectTarget(SELECT_TARGET_RANDOM, 0))
+                    if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0))
                         DoCast(target, SPELL_MARK_OF_SHADOW);
                     MarkOfShadow_Timer = 15000 + rand32() % 5000;
                 }
@@ -339,8 +354,6 @@ class npc_shadowmoon_channeler : public CreatureScript
                 }
                 else
                     ShadowBolt_Timer -=diff;
-
-                DoMeleeAttackIfReady();
             }
         };
 
@@ -355,4 +368,3 @@ void AddSC_boss_kelidan_the_breaker()
     new boss_kelidan_the_breaker();
     new npc_shadowmoon_channeler();
 }
-

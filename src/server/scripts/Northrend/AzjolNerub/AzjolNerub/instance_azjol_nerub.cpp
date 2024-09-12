@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,16 +16,51 @@
  */
 
 #include "ScriptMgr.h"
-#include "InstanceScript.h"
+#include "AreaBoundary.h"
 #include "azjol_nerub.h"
+#include "Creature.h"
+#include "CreatureAI.h"
+#include "InstanceScript.h"
 
 DoorData const doorData[] =
 {
-    { GO_KRIKTHIR_DOOR,     DATA_KRIKTHIR_THE_GATEWATCHER,  DOOR_TYPE_PASSAGE,  BOUNDARY_NONE },
-    { GO_ANUBARAK_DOOR_1,   DATA_ANUBARAK,                  DOOR_TYPE_ROOM,     BOUNDARY_NONE },
-    { GO_ANUBARAK_DOOR_2,   DATA_ANUBARAK,                  DOOR_TYPE_ROOM,     BOUNDARY_NONE },
-    { GO_ANUBARAK_DOOR_3,   DATA_ANUBARAK,                  DOOR_TYPE_ROOM,     BOUNDARY_NONE },
-    { 0,                    0,                              DOOR_TYPE_ROOM,     BOUNDARY_NONE } // END
+    { GO_KRIKTHIR_DOOR,     DATA_KRIKTHIR,                  EncounterDoorBehavior::OpenWhenDone },
+    { GO_ANUBARAK_DOOR_1,   DATA_ANUBARAK,                  EncounterDoorBehavior::OpenWhenNotInProgress },
+    { GO_ANUBARAK_DOOR_2,   DATA_ANUBARAK,                  EncounterDoorBehavior::OpenWhenNotInProgress },
+    { GO_ANUBARAK_DOOR_3,   DATA_ANUBARAK,                  EncounterDoorBehavior::OpenWhenNotInProgress },
+    { 0,                    0,                              EncounterDoorBehavior::OpenWhenNotInProgress } // END
+};
+
+ObjectData const creatureData[] =
+{
+    { NPC_KRIKTHIR,        DATA_KRIKTHIR        },
+    { NPC_HADRONOX,        DATA_HADRONOX        },
+    { NPC_ANUBARAK,        DATA_ANUBARAK        },
+    { NPC_WATCHER_NARJIL,  DATA_WATCHER_GASHRA  },
+    { NPC_WATCHER_GASHRA,  DATA_WATCHER_SILTHIK },
+    { NPC_WATCHER_SILTHIK, DATA_WATCHER_NARJIL  },
+    { 0,                   0                    } // END
+};
+
+ObjectData const gameobjectData[] =
+{
+    { GO_ANUBARAK_DOOR_1, DATA_ANUBARAK_WALL   },
+    { GO_ANUBARAK_DOOR_3, DATA_ANUBARAK_WALL_2 },
+    { 0,                  0                    } // END
+};
+
+BossBoundaryData const boundaries =
+{
+    { DATA_KRIKTHIR, new RectangleBoundary(400.0f, 580.0f, 623.5f, 810.0f)     },
+    { DATA_HADRONOX, new ZRangeBoundary(666.0f, 776.0f)                        },
+    { DATA_ANUBARAK, new CircleBoundary(Position(550.6178f, 253.5917f), 26.0f) }
+};
+
+DungeonEncounterData const encounters[] =
+{
+    { DATA_KRIKTHIR, {{ 1971 }} },
+    { DATA_HADRONOX, {{ 1972 }} },
+    { DATA_ANUBARAK, {{ 1973 }} }
 };
 
 class instance_azjol_nerub : public InstanceMapScript
@@ -35,149 +70,68 @@ class instance_azjol_nerub : public InstanceMapScript
 
         struct instance_azjol_nerub_InstanceScript : public InstanceScript
         {
-            instance_azjol_nerub_InstanceScript(Map* map) : InstanceScript(map)
+            instance_azjol_nerub_InstanceScript(InstanceMap* map) : InstanceScript(map)
             {
+                SetHeaders(DataHeader);
                 SetBossNumber(EncounterCount);
+                LoadBossBoundaries(boundaries);
                 LoadDoorData(doorData);
-
-                KrikthirGUID        = 0;
-                HadronoxGUID        = 0;
-                AnubarakGUID        = 0;
-                WatcherGashraGUID   = 0;
-                WatcherSilthikGUID  = 0;
-                WatcherNarjilGUID   = 0;
+                LoadObjectData(creatureData, gameobjectData);
+                LoadDungeonEncounterData(encounters);
+                GateWatcherGreet = 0;
             }
 
-            void OnCreatureCreate(Creature* creature) override
+            void OnUnitDeath(Unit* who) override
             {
-                switch (creature->GetEntry())
-                {
-                    case NPC_KRIKTHIR:
-                        KrikthirGUID = creature->GetGUID();
-                        break;
-                    case NPC_HADRONOX:
-                        HadronoxGUID = creature->GetGUID();
-                        break;
-                    case NPC_ANUBARAK:
-                        AnubarakGUID = creature->GetGUID();
-                        break;
-                    case NPC_WATCHER_NARJIL:
-                        WatcherNarjilGUID = creature->GetGUID();
-                        break;
-                    case NPC_WATCHER_GASHRA:
-                        WatcherGashraGUID = creature->GetGUID();
-                        break;
-                    case NPC_WATCHER_SILTHIK:
-                        WatcherSilthikGUID = creature->GetGUID();
-                        break;
-                    default:
-                        break;
-                }
+                InstanceScript::OnUnitDeath(who);
+
+                if (who->GetTypeId() != TYPEID_UNIT || GetBossState(DATA_KRIKTHIR) == DONE)
+                    return;
+
+                Creature* creature = who->ToCreature();
+                if (creature->IsCritter() || creature->IsCharmedOwnedByPlayerOrPlayer())
+                    return;
+
+                if (Creature* gatewatcher = GetCreature(DATA_KRIKTHIR))
+                    gatewatcher->AI()->DoAction(-ACTION_GATEWATCHER_GREET);
             }
 
-            void OnGameObjectCreate(GameObject* go) override
+            bool CheckRequiredBosses(uint32 bossId, Player const* player) const override
             {
-                switch (go->GetEntry())
-                {
-                    case GO_KRIKTHIR_DOOR:
-                    case GO_ANUBARAK_DOOR_1:
-                    case GO_ANUBARAK_DOOR_2:
-                    case GO_ANUBARAK_DOOR_3:
-                        AddDoor(go, true);
-                        break;
-                    default:
-                        break;
-                }
+                if (_SkipCheckRequiredBosses(player))
+                    return true;
+
+                if (bossId > DATA_KRIKTHIR && GetBossState(DATA_KRIKTHIR) != DONE)
+                    return false;
+
+                return true;
             }
 
-            void OnGameObjectRemove(GameObject* go) override
-            {
-                switch (go->GetEntry())
-                {
-                    case GO_KRIKTHIR_DOOR:
-                    case GO_ANUBARAK_DOOR_1:
-                    case GO_ANUBARAK_DOOR_2:
-                    case GO_ANUBARAK_DOOR_3:
-                        AddDoor(go, false);
-                        break;
-                    default:
-                        break;
-                }
-            }
-
-            uint64 GetData64(uint32 type) const override
+            uint32 GetData(uint32 type) const override
             {
                 switch (type)
                 {
-                    case DATA_KRIKTHIR_THE_GATEWATCHER:
-                        return KrikthirGUID;
-                    case DATA_HADRONOX:
-                        return HadronoxGUID;
-                    case DATA_ANUBARAK:
-                        return AnubarakGUID;
-                    case DATA_WATCHER_GASHRA:
-                        return WatcherGashraGUID;
-                    case DATA_WATCHER_SILTHIK:
-                        return WatcherSilthikGUID;
-                    case DATA_WATCHER_NARJIL:
-                        return WatcherNarjilGUID;
+                    case DATA_GATEWATCHER_GREET:
+                        return GateWatcherGreet;
+                    default:
+                        return 0;
+                }
+            }
+
+            void SetData(uint32 type, uint32 data) override
+            {
+                switch (type)
+                {
+                    case DATA_GATEWATCHER_GREET:
+                        GateWatcherGreet = data;
+                        break;
                     default:
                         break;
                 }
-
-                return 0;
-            }
-
-            std::string GetSaveData() override
-            {
-                OUT_SAVE_INST_DATA;
-
-                std::ostringstream saveStream;
-                saveStream << "A N " << GetBossSaveData();
-
-                OUT_SAVE_INST_DATA_COMPLETE;
-                return saveStream.str();
-            }
-
-            void Load(char const* str) override
-            {
-                if (!str)
-                {
-                    OUT_LOAD_INST_DATA_FAIL;
-                    return;
-                }
-
-                OUT_LOAD_INST_DATA(str);
-
-                char dataHead1, dataHead2;
-
-                std::istringstream loadStream(str);
-                loadStream >> dataHead1 >> dataHead2;
-
-                if (dataHead1 == 'A' && dataHead2 == 'N')
-                {
-                    for (uint32 i = 0; i < EncounterCount; ++i)
-                    {
-                        uint32 tmpState;
-                        loadStream >> tmpState;
-                        if (tmpState == IN_PROGRESS || tmpState > SPECIAL)
-                            tmpState = NOT_STARTED;
-                        SetBossState(i, EncounterState(tmpState));
-                    }
-                }
-                else
-                    OUT_LOAD_INST_DATA_FAIL;
-
-                OUT_LOAD_INST_DATA_COMPLETE;
             }
 
         protected:
-            uint64 KrikthirGUID;
-            uint64 HadronoxGUID;
-            uint64 AnubarakGUID;
-            uint64 WatcherGashraGUID;
-            uint64 WatcherSilthikGUID;
-            uint64 WatcherNarjilGUID;
+            uint8 GateWatcherGreet;
         };
 
         InstanceScript* GetInstanceScript(InstanceMap* map) const override

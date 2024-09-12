@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,8 +17,11 @@
 
 #include "PacketLog.h"
 #include "Config.h"
-#include "WorldPacket.h"
+#include "GameTime.h"
+#include "IpAddress.h"
+#include "RealmList.h"
 #include "Timer.h"
+#include "WorldPacket.h"
 
 #pragma pack(push, 1)
 
@@ -45,7 +48,7 @@ struct PacketHeader
         uint32 SocketPort;
     };
 
-    char Direction[4];
+    uint32 Direction;
     uint32 ConnectionId;
     uint32 ArrivalTicks;
     uint32 OptionalDataSize;
@@ -56,7 +59,7 @@ struct PacketHeader
 
 #pragma pack(pop)
 
-PacketLog::PacketLog() : _file(NULL)
+PacketLog::PacketLog() : _file(nullptr)
 {
     std::call_once(_initializeFlag, &PacketLog::Initialize, this);
 }
@@ -66,7 +69,13 @@ PacketLog::~PacketLog()
     if (_file)
         fclose(_file);
 
-    _file = NULL;
+    _file = nullptr;
+}
+
+PacketLog* PacketLog::instance()
+{
+    static PacketLog instance;
+    return &instance;
 }
 
 void PacketLog::Initialize()
@@ -82,28 +91,34 @@ void PacketLog::Initialize()
     {
         _file = fopen((logsDir + logname).c_str(), "wb");
 
-        LogHeader header;
-        header.Signature[0] = 'P'; header.Signature[1] = 'K'; header.Signature[2] = 'T';
-        header.FormatVersion = 0x0301;
-        header.SnifferId = 'T';
-        header.Build = 12340;
-        header.Locale[0] = 'e'; header.Locale[1] = 'n'; header.Locale[2] = 'U'; header.Locale[3] = 'S';
-        std::memset(header.SessionKey, 0, sizeof(header.SessionKey));
-        header.SniffStartUnixtime = time(NULL);
-        header.SniffStartTicks = getMSTime();
-        header.OptionalDataSize = 0;
+        if (CanLogPacket())
+        {
+            LogHeader header;
+            header.Signature[0] = 'P'; header.Signature[1] = 'K'; header.Signature[2] = 'T';
+            header.FormatVersion = 0x0301;
+            header.SnifferId = 'T';
+            if (std::shared_ptr<Realm const> currentRealm = sRealmList->GetCurrentRealm())
+                header.Build = currentRealm->Build;
+            else
+                header.Build = 0;
+            header.Locale[0] = 'e'; header.Locale[1] = 'n'; header.Locale[2] = 'U'; header.Locale[3] = 'S';
+            std::memset(header.SessionKey, 0, sizeof(header.SessionKey));
+            header.SniffStartUnixtime = GameTime::GetGameTime();
+            header.SniffStartTicks = getMSTime();
+            header.OptionalDataSize = 0;
 
-        fwrite(&header, sizeof(header), 1, _file);
+            fwrite(&header, sizeof(header), 1, _file);
+        }
     }
 }
 
-void PacketLog::LogPacket(WorldPacket const& packet, Direction direction, boost::asio::ip::address addr, uint16 port)
+void PacketLog::LogPacket(WorldPacket const& packet, Direction direction, boost::asio::ip::address const& addr, uint16 port, ConnectionType connectionType)
 {
     std::lock_guard<std::mutex> lock(_logPacketLock);
 
     PacketHeader header;
-    *reinterpret_cast<uint32*>(header.Direction) = direction == CLIENT_TO_SERVER ? 0x47534d43 : 0x47534d53;
-    header.ConnectionId = 0;
+    header.Direction = direction == CLIENT_TO_SERVER ? 0x47534d43 : 0x47534d53;
+    header.ConnectionId = connectionType;
     header.ArrivalTicks = getMSTime();
 
     header.OptionalDataSize = sizeof(header.OptionalData);
@@ -120,12 +135,21 @@ void PacketLog::LogPacket(WorldPacket const& packet, Direction direction, boost:
     }
 
     header.OptionalData.SocketPort = port;
-    header.Length = packet.size() + sizeof(header.Opcode);
+    std::size_t size = packet.size();
+    if (direction == CLIENT_TO_SERVER)
+        size -= 2;
+
+    header.Length = size + sizeof(header.Opcode);
     header.Opcode = packet.GetOpcode();
 
     fwrite(&header, sizeof(header), 1, _file);
-    if (!packet.empty())
-        fwrite(packet.contents(), 1, packet.size(), _file);
+    if (size)
+    {
+        uint8 const* data = packet.contents();
+        if (direction == CLIENT_TO_SERVER)
+            data += 2;
+        fwrite(data, 1, size, _file);
+    }
 
     fflush(_file);
 }

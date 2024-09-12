@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -15,15 +15,21 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "CreatureAIImpl.h"
+#include "GameObject.h"
+#include "MotionMaster.h"
+#include "Player.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
-#include "Vehicle.h"
+#include "SpellInfo.h"
 #include "SpellScript.h"
-#include "Player.h"
+#include "ScriptedGossip.h"
+#include "PassiveAI.h"
+#include "ObjectAccessor.h"
 
 /*######
-##Quest 5441: Lazy Peons
-##npc_lazy_peon
+## Quest 37446: Lazy Peons
+## npc_lazy_peon
 ######*/
 
 enum LazyPeonYells
@@ -33,10 +39,10 @@ enum LazyPeonYells
 
 enum LazyPeon
 {
-    QUEST_LAZY_PEONS                              = 5441,
-    GO_LUMBERPILE                                 = 175784,
-    SPELL_BUFF_SLEEP                              = 17743,
-    SPELL_AWAKEN_PEON                             = 19938
+    QUEST_LAZY_PEONS    = 37446,
+    GO_LUMBERPILE       = 175784,
+    SPELL_BUFF_SLEEP    = 17743,
+    SPELL_AWAKEN_PEON   = 19938
 };
 
 class npc_lazy_peon : public CreatureScript
@@ -51,18 +57,23 @@ public:
 
     struct npc_lazy_peonAI : public ScriptedAI
     {
-        npc_lazy_peonAI(Creature* creature) : ScriptedAI(creature) { }
+        npc_lazy_peonAI(Creature* creature) : ScriptedAI(creature)
+        {
+            Initialize();
+        }
 
-        uint64 PlayerGUID;
+        void Initialize()
+        {
+            RebuffTimer = 0;
+            work = false;
+        }
 
         uint32 RebuffTimer;
         bool work;
 
         void Reset() override
         {
-            PlayerGUID = 0;
-            RebuffTimer = 0;
-            work = false;
+            Initialize();
         }
 
         void MovementInform(uint32 /*type*/, uint32 id) override
@@ -71,7 +82,7 @@ public:
                 work = true;
         }
 
-        void SpellHit(Unit* caster, const SpellInfo* spell) override
+        void SpellHit(WorldObject* caster, SpellInfo const* spell) override
         {
             if (spell->Id != SPELL_AWAKEN_PEON)
                 return;
@@ -94,443 +105,14 @@ public:
             if (RebuffTimer <= diff)
             {
                 DoCast(me, SPELL_BUFF_SLEEP);
-                RebuffTimer = 300000;                 //Rebuff agian in 5 minutes
+                RebuffTimer = 300000; //Rebuff agian in 5 minutes
             }
             else
                 RebuffTimer -= diff;
             if (!UpdateVictim())
                 return;
-            DoMeleeAttackIfReady();
         }
     };
-};
-
-enum Texts
-{
-    // Tiger Matriarch Credit
-    SAY_MATRIARCH_AGGRO     = 0,
-
-    // Troll Volunteer
-    SAY_VOLUNTEER_START     = 0,
-    SAY_VOLUNTEER_END       = 1,
-};
-
-enum Spells
-{
-    // Tiger Matriarch Credit
-    SPELL_SUMMON_MATRIARCH              = 75187,
-    SPELL_NO_SUMMON_AURA                = 75213,
-    SPELL_DETECT_INVIS                  = 75180,
-    SPELL_SUMMON_ZENTABRA_TRIGGER       = 75212,
-
-    // Tiger Matriarch
-    SPELL_POUNCE                        = 61184,
-    SPELL_FURIOUS_BITE                  = 75164,
-    SPELL_SUMMON_ZENTABRA               = 75181,
-    SPELL_SPIRIT_OF_THE_TIGER_RIDER     = 75166,
-    SPELL_EJECT_PASSENGERS              = 50630,
-
-    // Troll Volunteer
-    SPELL_VOLUNTEER_AURA                = 75076,
-    SPELL_PETACT_AURA                   = 74071,
-    SPELL_QUEST_CREDIT                  = 75106,
-    SPELL_MOUNTING_CHECK                = 75420,
-    SPELL_TURNIN                        = 73953,
-    SPELL_AOE_TURNIN                    = 75107,
-
-    // Vol'jin War Drums
-    SPELL_MOTIVATE_1                    = 75088,
-    SPELL_MOTIVATE_2                    = 75086,
-};
-
-enum Creatures
-{
-    // Tiger Matriarch Credit
-    NPC_TIGER_VEHICLE                   = 40305,
-
-    // Troll Volunteer
-    NPC_URUZIN                          = 40253,
-    NPC_VOLUNTEER_1                     = 40264,
-    NPC_VOLUNTEER_2                     = 40260,
-
-    // Vol'jin War Drums
-    NPC_CITIZEN_1                       = 40256,
-    NPC_CITIZEN_2                       = 40257,
-};
-
-enum Events
-{
-    // Tiger Matriarch Credit
-    EVENT_CHECK_SUMMON_AURA             = 1,
-
-    // Tiger Matriarch
-    EVENT_POUNCE                        = 2,
-    EVENT_NOSUMMON                      = 3,
-};
-
-enum Points
-{
-    POINT_URUZIN                        = 4026400,
-};
-
-class npc_tiger_matriarch_credit : public CreatureScript
-{
-    public:
-        npc_tiger_matriarch_credit() : CreatureScript("npc_tiger_matriarch_credit") { }
-
-        struct npc_tiger_matriarch_creditAI : public ScriptedAI
-        {
-           npc_tiger_matriarch_creditAI(Creature* creature) : ScriptedAI(creature)
-           {
-               SetCombatMovement(false);
-               events.ScheduleEvent(EVENT_CHECK_SUMMON_AURA, 2000);
-           }
-
-            void UpdateAI(uint32 diff) override
-            {
-                events.Update(diff);
-
-                if (events.ExecuteEvent() == EVENT_CHECK_SUMMON_AURA)
-                {
-                    std::list<Creature*> tigers;
-                    GetCreatureListWithEntryInGrid(tigers, me, NPC_TIGER_VEHICLE, 15.0f);
-                    if (!tigers.empty())
-                    {
-                        for (std::list<Creature*>::iterator itr = tigers.begin(); itr != tigers.end(); ++itr)
-                        {
-                            if (!(*itr)->IsSummon())
-                                continue;
-
-                            if (Unit* summoner = (*itr)->ToTempSummon()->GetSummoner())
-                                if (!summoner->HasAura(SPELL_NO_SUMMON_AURA) && !summoner->HasAura(SPELL_SUMMON_ZENTABRA_TRIGGER)
-                                    && !summoner->IsInCombat())
-                                {
-                                    me->AddAura(SPELL_NO_SUMMON_AURA, summoner);
-                                    me->AddAura(SPELL_DETECT_INVIS, summoner);
-                                    summoner->CastSpell(summoner, SPELL_SUMMON_MATRIARCH, true);
-                                    Talk(SAY_MATRIARCH_AGGRO, summoner);
-                                }
-                        }
-                    }
-
-                    events.ScheduleEvent(EVENT_CHECK_SUMMON_AURA, 5000);
-                }
-            }
-
-        private:
-            EventMap events;
-        };
-
-        CreatureAI* GetAI(Creature* creature) const override
-        {
-            return new npc_tiger_matriarch_creditAI(creature);
-        }
-};
-
-class npc_tiger_matriarch : public CreatureScript
-{
-    public:
-        npc_tiger_matriarch() : CreatureScript("npc_tiger_matriarch") { }
-
-        struct npc_tiger_matriarchAI : public ScriptedAI
-        {
-            npc_tiger_matriarchAI(Creature* creature) : ScriptedAI(creature),
-                _tigerGuid(0)
-            {
-            }
-
-            void EnterCombat(Unit* /*target*/) override
-            {
-                _events.Reset();
-                _events.ScheduleEvent(EVENT_POUNCE, 100);
-                _events.ScheduleEvent(EVENT_NOSUMMON, 50000);
-            }
-
-            void IsSummonedBy(Unit* summoner) override
-            {
-                if (summoner->GetTypeId() != TYPEID_PLAYER || !summoner->GetVehicle())
-                    return;
-
-                _tigerGuid = summoner->GetVehicle()->GetBase()->GetGUID();
-                if (Unit* tiger = ObjectAccessor::GetUnit(*me, _tigerGuid))
-                {
-                    me->AddThreat(tiger, 500000.0f);
-                    DoCast(me, SPELL_FURIOUS_BITE);
-                }
-            }
-
-            void KilledUnit(Unit* victim) override
-            {
-                if (victim->GetTypeId() != TYPEID_UNIT || !victim->IsSummon())
-                    return;
-
-                if (Unit* vehSummoner = victim->ToTempSummon()->GetSummoner())
-                {
-                    vehSummoner->RemoveAurasDueToSpell(SPELL_NO_SUMMON_AURA);
-                    vehSummoner->RemoveAurasDueToSpell(SPELL_DETECT_INVIS);
-                    vehSummoner->RemoveAurasDueToSpell(SPELL_SPIRIT_OF_THE_TIGER_RIDER);
-                    vehSummoner->RemoveAurasDueToSpell(SPELL_SUMMON_ZENTABRA_TRIGGER);
-                }
-                me->DespawnOrUnsummon();
-            }
-
-            void DamageTaken(Unit* attacker, uint32& damage) override
-            {
-                if (!attacker->IsSummon())
-                    return;
-
-                if (HealthBelowPct(20))
-                {
-                    damage = 0;
-                    me->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NON_ATTACKABLE);
-                    if (Unit* vehSummoner = attacker->ToTempSummon()->GetSummoner())
-                    {
-                        vehSummoner->AddAura(SPELL_SUMMON_ZENTABRA_TRIGGER, vehSummoner);
-                        vehSummoner->CastSpell(vehSummoner, SPELL_SUMMON_ZENTABRA, true);
-                        attacker->CastSpell(attacker, SPELL_EJECT_PASSENGERS, true);
-                        vehSummoner->RemoveAurasDueToSpell(SPELL_NO_SUMMON_AURA);
-                        vehSummoner->RemoveAurasDueToSpell(SPELL_DETECT_INVIS);
-                        vehSummoner->RemoveAurasDueToSpell(SPELL_SPIRIT_OF_THE_TIGER_RIDER);
-                        vehSummoner->RemoveAurasDueToSpell(SPELL_SUMMON_ZENTABRA_TRIGGER);
-                    }
-
-                    me->DespawnOrUnsummon();
-                }
-            }
-
-            void UpdateAI(uint32 diff) override
-            {
-                if (!UpdateVictim())
-                    return;
-
-                if (!_tigerGuid)
-                    return;
-
-                _events.Update(diff);
-
-                while (uint32 eventId = _events.ExecuteEvent())
-                {
-                    switch (eventId)
-                    {
-                        case EVENT_POUNCE:
-                            DoCastVictim(SPELL_POUNCE);
-                            _events.ScheduleEvent(EVENT_POUNCE, 30000);
-                            break;
-                        case EVENT_NOSUMMON: // Reapply SPELL_NO_SUMMON_AURA
-                            if (Unit* tiger = ObjectAccessor::GetUnit(*me, _tigerGuid))
-                            {
-                                if (tiger->IsSummon())
-                                    if (Unit* vehSummoner = tiger->ToTempSummon()->GetSummoner())
-                                        me->AddAura(SPELL_NO_SUMMON_AURA, vehSummoner);
-                            }
-                            _events.ScheduleEvent(EVENT_NOSUMMON, 50000);
-                            break;
-                        default:
-                            break;
-                    }
-                }
-
-                DoMeleeAttackIfReady();
-            }
-
-        private:
-            EventMap _events;
-            uint64 _tigerGuid;
-        };
-
-        CreatureAI* GetAI(Creature* creature) const override
-        {
-            return new npc_tiger_matriarchAI(creature);
-        }
-};
-
-// These models was found in sniff.
-/// @todo generalize these models with race from dbc
-uint32 const trollmodel[] =
-{11665, 11734, 11750, 12037, 12038, 12042, 12049, 12849, 13529, 14759, 15570, 15701,
-15702, 1882, 1897, 1976, 2025, 27286, 2734, 2735, 4084, 4085, 4087, 4089, 4231, 4357,
-4358, 4360, 4361, 4362, 4363, 4370, 4532, 4537, 4540, 4610, 6839, 7037, 9767, 9768};
-
-class npc_troll_volunteer : public CreatureScript
-{
-    public:
-        npc_troll_volunteer() : CreatureScript("npc_troll_volunteer") { }
-
-        struct npc_troll_volunteerAI : public ScriptedAI
-        {
-            npc_troll_volunteerAI(Creature* creature) : ScriptedAI(creature)
-            {
-            }
-
-            void InitializeAI() override
-            {
-                if (me->isDead() || !me->GetOwner())
-                    return;
-
-                Reset();
-
-                switch (urand(0, 3))
-                {
-                    case 0:
-                        _mountModel = 6471;
-                        break;
-                    case 1:
-                        _mountModel = 6473;
-                        break;
-                    case 2:
-                        _mountModel = 6469;
-                        break;
-                    default:
-                        _mountModel = 6472;
-                        break;
-                }
-                me->SetDisplayId(trollmodel[urand(0, 39)]);
-                if (Player* player = me->GetOwner()->ToPlayer())
-                    me->GetMotionMaster()->MoveFollow(player, 5.0f, float(rand_norm() + 1.0f) * float(M_PI) / 3.0f * 4.0f);
-            }
-
-            void Reset() override
-            {
-                _complete = false;
-                me->AddAura(SPELL_VOLUNTEER_AURA, me);
-                me->AddAura(SPELL_MOUNTING_CHECK, me);
-                DoCast(me, SPELL_PETACT_AURA);
-                me->SetReactState(REACT_PASSIVE);
-                Talk(SAY_VOLUNTEER_START);
-            }
-
-            // This is needed for mount check aura to know what mountmodel the npc got stored
-            uint32 GetMountId()
-            {
-                return _mountModel;
-            }
-
-            void MovementInform(uint32 type, uint32 id) override
-            {
-                if (type != POINT_MOTION_TYPE)
-                    return;
-                if (id == POINT_URUZIN)
-                    me->DespawnOrUnsummon();
-            }
-
-            void SpellHit(Unit* caster, SpellInfo const* spell) override
-            {
-                if (spell->Id == SPELL_AOE_TURNIN && caster->GetEntry() == NPC_URUZIN && !_complete)
-                {
-                    _complete = true;    // Preventing from giving credit twice
-                    DoCast(me, SPELL_TURNIN);
-                    DoCast(me, SPELL_QUEST_CREDIT);
-                    me->RemoveAurasDueToSpell(SPELL_MOUNTING_CHECK);
-                    me->Dismount();
-                    Talk(SAY_VOLUNTEER_END);
-                    me->GetMotionMaster()->MovePoint(POINT_URUZIN, caster->GetPositionX(), caster->GetPositionY(), caster->GetPositionZ());
-                }
-            }
-
-        private:
-            uint32 _mountModel;
-            bool _complete;
-        };
-
-        CreatureAI* GetAI(Creature* creature) const override
-        {
-            return new npc_troll_volunteerAI(creature);
-        }
-};
-
-typedef npc_troll_volunteer::npc_troll_volunteerAI VolunteerAI;
-
-class spell_mount_check : public SpellScriptLoader
-{
-    public:
-        spell_mount_check() : SpellScriptLoader("spell_mount_check") { }
-
-        class spell_mount_check_AuraScript : public AuraScript
-        {
-            PrepareAuraScript(spell_mount_check_AuraScript);
-
-            bool Validate(SpellInfo const* /*spellInfo*/) override
-            {
-                if (!sSpellMgr->GetSpellInfo(SPELL_MOUNTING_CHECK))
-                    return false;
-                return true;
-            }
-
-            void HandleEffectPeriodic(AuraEffect const* /*aurEff*/)
-            {
-                Unit* target = GetTarget();
-                Unit* owner = target->GetOwner();
-
-                if (!owner)
-                    return;
-
-                if (owner->IsMounted() && !target->IsMounted())
-                {
-                    if (VolunteerAI* volunteerAI = CAST_AI(VolunteerAI, target->GetAI()))
-                        target->Mount(volunteerAI->GetMountId());
-                }
-                else if (!owner->IsMounted() && target->IsMounted())
-                    target->Dismount();
-
-                target->SetSpeed(MOVE_RUN, owner->GetSpeedRate(MOVE_RUN));
-                target->SetSpeed(MOVE_WALK, owner->GetSpeedRate(MOVE_WALK));
-            }
-
-            void Register() override
-            {
-                OnEffectPeriodic += AuraEffectPeriodicFn(spell_mount_check_AuraScript::HandleEffectPeriodic, EFFECT_0, SPELL_AURA_PERIODIC_DUMMY);
-            }
-        };
-
-        AuraScript* GetAuraScript() const override
-        {
-            return new spell_mount_check_AuraScript();
-        }
-};
-
-class spell_voljin_war_drums : public SpellScriptLoader
-{
-    public:
-        spell_voljin_war_drums() : SpellScriptLoader("spell_voljin_war_drums") { }
-
-        class spell_voljin_war_drums_SpellScript : public SpellScript
-        {
-            PrepareSpellScript(spell_voljin_war_drums_SpellScript);
-
-            bool Validate(SpellInfo const* /*spellInfo*/) override
-            {
-                if (!sSpellMgr->GetSpellInfo(SPELL_MOTIVATE_1))
-                    return false;
-                if (!sSpellMgr->GetSpellInfo(SPELL_MOTIVATE_2))
-                    return false;
-               return true;
-            }
-
-            void HandleDummy(SpellEffIndex /*effIndex*/)
-            {
-                Unit* caster = GetCaster();
-                if (Unit* target = GetHitUnit())
-                {
-                    uint32 motivate = 0;
-                    if (target->GetEntry() == NPC_CITIZEN_1)
-                        motivate = SPELL_MOTIVATE_1;
-                    else if (target->GetEntry() == NPC_CITIZEN_2)
-                        motivate = SPELL_MOTIVATE_2;
-                    if (motivate)
-                        caster->CastSpell(target, motivate, false);
-                }
-            }
-
-            void Register() override
-            {
-                OnEffectHitTarget += SpellEffectFn(spell_voljin_war_drums_SpellScript::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
-            }
-        };
-
-        SpellScript* GetSpellScript() const override
-        {
-            return new spell_voljin_war_drums_SpellScript();
-        }
 };
 
 enum VoodooSpells
@@ -544,52 +126,1129 @@ enum VoodooSpells
     SPELL_LAUNCH    = 16716, // Launch (Whee!)
 };
 
-// 17009
-class spell_voodoo : public SpellScriptLoader
+// 17009 - Voodoo
+class spell_voodoo : public SpellScript
 {
-    public:
-        spell_voodoo() : SpellScriptLoader("spell_voodoo") { }
+    bool Validate(SpellInfo const* /*spellInfo*/) override
+    {
+        return ValidateSpellInfo({ SPELL_BREW, SPELL_GHOSTLY, SPELL_HEX1, SPELL_HEX2, SPELL_HEX3, SPELL_GROW, SPELL_LAUNCH });
+    }
 
-        class spell_voodoo_SpellScript : public SpellScript
+    void HandleDummy(SpellEffIndex /*effIndex*/)
+    {
+        uint32 spellid = RAND(SPELL_BREW, SPELL_GHOSTLY, RAND(SPELL_HEX1, SPELL_HEX2, SPELL_HEX3), SPELL_GROW, SPELL_LAUNCH);
+        if (Unit* target = GetHitUnit())
+            GetCaster()->CastSpell(target, spellid, false);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_voodoo::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
+    }
+};
+
+enum Mithaka
+{
+    DATA_SHIP_DOCKED    = 1,
+    GOSSIP_MENU_MITHAKA = 23225,
+    GOSSIP_TEXT_MITHAKA = 35969
+};
+
+struct npc_mithaka : ScriptedAI
+{
+    npc_mithaka(Creature* creature) : ScriptedAI(creature), _shipInPort(false) { }
+
+    void SetData(uint32 /*type*/, uint32 data) override
+    {
+        if (data == DATA_SHIP_DOCKED)
+            _shipInPort = true;
+        else
+            _shipInPort = false;
+    }
+
+    bool OnGossipHello(Player* player) override
+    {
+        InitGossipMenuFor(player, GOSSIP_MENU_MITHAKA);
+        if (!_shipInPort)
+            AddGossipItemFor(player, GOSSIP_MENU_MITHAKA, 0, GOSSIP_SENDER_MAIN, GOSSIP_ACTION_INFO_DEF + 1);
+        SendGossipMenuFor(player, GOSSIP_TEXT_MITHAKA, me->GetGUID());
+        return true;
+    }
+private:
+    bool _shipInPort;
+};
+
+// Echo Isles
+// 91404 - Summon Zuni (Lvl 1)
+class spell_durotar_summon_zuni : public SpellScript
+{
+    void SetDest(SpellDestination& dest)
+    {
+        dest.Relocate({ -1173.4531f, -5266.401f, 0.85905945f, 0.0f });
+    }
+
+    void Register() override
+    {
+        OnDestinationTargetSelect += SpellDestinationTargetSelectFn(spell_durotar_summon_zuni::SetDest, EFFECT_0, TARGET_DEST_NEARBY_ENTRY);
+    }
+};
+
+enum TikiTargetData
+{
+    SPELL_ARCANE_MISSILES_TRAINER = 83470,
+    SPELL_TIKI_TARGET_VISUAL_1    = 71064,
+    SPELL_TIKI_TARGET_VISUAL_2    = 71065,
+    SPELL_TIKI_TARGET_VISUAL_3    = 71066,
+    SPELL_TIKI_TARGET_DEATH       = 71240
+};
+
+uint32 const TiKiTargetMask[3] = { SPELL_TIKI_TARGET_VISUAL_1, SPELL_TIKI_TARGET_VISUAL_2, SPELL_TIKI_TARGET_VISUAL_3 };
+
+struct npc_durotar_tiki_target : public ScriptedAI
+{
+    npc_durotar_tiki_target(Creature* creature) : ScriptedAI(creature), _credited(false) { }
+
+    void JustAppeared() override
+    {
+        me->SetReactState(REACT_PASSIVE);
+        DoCastSelf(TiKiTargetMask[urand(0, 2)]);
+        DoCastSelf(SPELL_ARCANE_MISSILES_TRAINER);
+    }
+
+    void DamageTaken(Unit* attacker, uint32& damage, DamageEffectType /*damageType*/, SpellInfo const* /*spellInfo = nullptr*/) override
+    {
+        if (me->GetHealth() <= damage)
         {
-            PrepareSpellScript(spell_voodoo_SpellScript);
+            damage = 0;
+            me->SetHealth(1);
 
-            bool Validate(SpellInfo const* /*spellInfo*/) override
+            if (!_credited)
             {
-                if (!sSpellMgr->GetSpellInfo(SPELL_BREW) || !sSpellMgr->GetSpellInfo(SPELL_GHOSTLY) ||
-                    !sSpellMgr->GetSpellInfo(SPELL_HEX1) || !sSpellMgr->GetSpellInfo(SPELL_HEX2) ||
-                    !sSpellMgr->GetSpellInfo(SPELL_HEX3) || !sSpellMgr->GetSpellInfo(SPELL_GROW) ||
-                    !sSpellMgr->GetSpellInfo(SPELL_LAUNCH))
-                    return false;
-                return true;
-            }
+                _credited = true;
 
-            void HandleDummy(SpellEffIndex /*effIndex*/)
-            {
-                uint32 spellid = RAND(SPELL_BREW, SPELL_GHOSTLY, RAND(SPELL_HEX1, SPELL_HEX2, SPELL_HEX3), SPELL_GROW, SPELL_LAUNCH);
-                if (Unit* target = GetHitUnit())
-                    GetCaster()->CastSpell(target, spellid, false);
-            }
+                DoCastSelf(SPELL_TIKI_TARGET_DEATH);
 
-            void Register() override
-            {
-                OnEffectHitTarget += SpellEffectFn(spell_voodoo_SpellScript::HandleDummy, EFFECT_0, SPELL_EFFECT_DUMMY);
-            }
-        };
+                if (Player* player = attacker->ToPlayer())
+                    player->KilledMonsterCredit(me->GetEntry());
 
-        SpellScript* GetSpellScript() const override
-        {
-            return new spell_voodoo_SpellScript();
+                me->DespawnOrUnsummon(2s, 13s);
+            }
         }
+    }
+
+private:
+    bool _credited;
+};
+
+enum DarkspearJailorData
+{
+    ACTION_EVENT_COMPLETE         = 1,
+    ACTION_MOVE_TO_PRISONER       = 1,
+
+    EVENT_PLAYER_ACCEPT_CHALLENGE = 1,
+    EVENT_WALK_BACK_TO_HOME       = 2,
+
+    GOSSIP_JAILOR_EVENT_NOT_READY = 10973,
+    GOSSIP_JAILOR_EVENT_READY     = 10974,
+
+    GOSSIP_EVENT_IN_PROGRESS_ID   = 10973,
+    TEXT_GOSSIP_EVENT_IN_PROGRESS = 15252,
+
+    NPC_DARKSPEAR_JAILOR          = 39062,
+    NPC_CAPTIVE_SPITESCALE_SCOUT  = 38142,
+
+    PATH_CAGE_ONE                 = 30915500,
+    PATH_HOME_ONE                 = 30915501,
+    PATH_CAGE_TWO                 = 30908200,
+    PATH_HOME_TWO                 = 30908201,
+
+    SAY_GET_IN_THE_PIT            = 0,
+
+    SPELL_ACTIVATE_DNT            = 227105,
+};
+
+// 39062 - Darkspear Jailor
+struct npc_darkspear_jailor : public ScriptedAI
+{
+    npc_darkspear_jailor(Creature* creature) : ScriptedAI(creature), _eventInProgress(false), _pathCage(0), _pathHome(0) { }
+
+    void JustAppeared() override
+    {
+        me->SetGossipMenuId(GOSSIP_JAILOR_EVENT_READY);
+
+        if (me->HasStringId("darkspear_jailor_one"))
+        {
+            _pathCage = PATH_CAGE_ONE;
+            _pathHome = PATH_HOME_ONE;
+        }
+        else if (me->HasStringId("darkspear_jailor_two"))
+        {
+            _pathCage = PATH_CAGE_TWO;
+            _pathHome = PATH_HOME_TWO;
+        }
+    }
+
+    void DoAction(int32 param) override
+    {
+        if (param == ACTION_EVENT_COMPLETE)
+        {
+            _eventInProgress = false;
+            me->SetGossipMenuId(GOSSIP_JAILOR_EVENT_READY);
+        }
+    }
+
+    void WaypointPathEnded(uint32 /*nodeId*/, uint32 pathId) override
+    {
+        if (pathId == _pathCage)
+        {
+            me->HandleEmoteCommand(EMOTE_ONESHOT_USE_STANDING);
+            me->CastSpell(me, SPELL_ACTIVATE_DNT);
+            _events.ScheduleEvent(EVENT_WALK_BACK_TO_HOME, 1s);
+        }
+    }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 /*gossipListId*/) override
+    {
+        CloseGossipMenuFor(player);
+        player->KilledMonsterCredit(NPC_DARKSPEAR_JAILOR);
+        Talk(SAY_GET_IN_THE_PIT, player);
+        _eventInProgress = true;
+        me->SetGossipMenuId(GOSSIP_JAILOR_EVENT_NOT_READY);
+        _events.ScheduleEvent(EVENT_PLAYER_ACCEPT_CHALLENGE, 2s);
+        return true;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_PLAYER_ACCEPT_CHALLENGE:
+                    me->GetMotionMaster()->MovePath(_pathCage, false);
+                    break;
+                case EVENT_WALK_BACK_TO_HOME:
+                    if (Creature* scout = me->FindNearestCreature(NPC_CAPTIVE_SPITESCALE_SCOUT, 5.0f, true))
+                        scout->AI()->DoAction(ACTION_MOVE_TO_PRISONER);
+                    me->GetMotionMaster()->MovePath(_pathHome, false);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (!UpdateVictim())
+            return;
+    }
+private:
+    EventMap _events;
+    bool _eventInProgress;
+    uint32 _pathCage;
+    uint32 _pathHome;
+};
+
+enum CaptiveSpitescaleScoutData
+{
+    EVENT_UPDATE_JAILOR_GOSSIP      = 1,
+    EVENT_TALK_TO_PLAYER            = 2,
+    EVENT_DESPAWN_OUT_OF_COMBAT     = 3,
+    EVENT_CAST_FROSTSHOCK           = 4,
+
+    POINT_PRISONER_POSITION         = 0,
+
+    SAY_SEND_YOU_TO_YOUR_DEATH      = 0,
+
+    SPELL_FROST_SHOCK               = 15089
+};
+
+Position const PrisonerPositionOne = { -1142.49f, -5415.59f, 10.597655f };
+Position const PrisonerPositionTwo = { -1149.03f, -5526.18f, 8.1045685f };
+
+// 38142 - Captive Spitescale Scout
+struct npc_captive_spitescale_scout : public ScriptedAI
+{
+    npc_captive_spitescale_scout(Creature* creature) : ScriptedAI(creature) { }
+
+    void JustAppeared() override
+    {
+        _events.ScheduleEvent(EVENT_UPDATE_JAILOR_GOSSIP, 2s);
+    }
+
+    void JustDied(Unit* /*killer*/) override
+    {
+        me->SetImmuneToPC(true);
+        me->DespawnOrUnsummon(10s, 7s);
+    }
+
+    void EnterEvadeMode(EvadeReason /*why*/) override
+    {
+        me->DespawnOrUnsummon(0s, 2s);
+    }
+
+    void JustEngagedWith(Unit* /*who*/) override
+    {
+        _events.CancelEvent(EVENT_DESPAWN_OUT_OF_COMBAT);
+        _events.ScheduleEvent(EVENT_CAST_FROSTSHOCK, 2s, 4s);
+    }
+
+    void DoAction(int32 param) override
+    {
+        if (param == ACTION_MOVE_TO_PRISONER)
+        {
+            me->SetWalk(true);
+
+            if (me->HasStringId("captive_spitescale_scout_one"))
+                me->GetMotionMaster()->MovePoint(POINT_PRISONER_POSITION, PrisonerPositionOne);
+            else if (me->HasStringId("captive_spitescale_scout_two"))
+                me->GetMotionMaster()->MovePoint(POINT_PRISONER_POSITION, PrisonerPositionTwo);
+        }
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type == POINT_MOTION_TYPE && id == POINT_PRISONER_POSITION)
+        {
+            _events.ScheduleEvent(EVENT_TALK_TO_PLAYER, 1s);
+            _events.ScheduleEvent(EVENT_DESPAWN_OUT_OF_COMBAT, 100s);
+        }
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_UPDATE_JAILOR_GOSSIP:
+                    if (Creature* jailer = me->FindNearestCreature(NPC_DARKSPEAR_JAILOR, 25.0f, true))
+                        jailer->AI()->DoAction(ACTION_EVENT_COMPLETE);
+                    break;
+                case EVENT_TALK_TO_PLAYER:
+                    Talk(SAY_SEND_YOU_TO_YOUR_DEATH);
+                    me->SetImmuneToPC(false);
+                    break;
+                case EVENT_DESPAWN_OUT_OF_COMBAT:
+                    me->DespawnOrUnsummon(0s, 2s);
+                    break;
+                case EVENT_CAST_FROSTSHOCK:
+                    DoCastVictim(SPELL_FROST_SHOCK);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (!UpdateVictim())
+            return;
+    }
+
+private:
+    EventMap _events;
+    ObjectGuid _jailorGUID;
+};
+
+enum ProvingPitData
+{
+    EVENT_MOVE_TO_PIT               = 1,
+    EVENT_MOVE_HOME                 = 2,
+
+    GOSSIP_MENU_ARCANE_MOMENTUN     = 20690,
+
+    GOSSIP_OPTION_TRAIN_MOMENTUM    = 0,
+    GOSSIP_OPTION_UNTRAIN_MOMENTUM  = 1,
+
+    NPC_TRAINER_NORTET              = 38037, // Warrior Trainer
+    NPC_TRAINER_TUNARI              = 38245, // Priest Trainer
+    NPC_TRAINER_SERATHA             = 38246, // Mage Trainer
+    NPC_TRAINER_LEGATI              = 38244, // Rogue Trainer
+    NPC_TRAINER_NEKALI              = 38242, // Shaman Trainer
+    NPC_TRAINER_ERTEZZA             = 38247, // Hunter Trainer
+    NPC_TRAINER_ZENTABRA            = 38243, // Druid Trainer
+    NPC_TRAINER_VOLDREKA            = 42618, // Warlock Trainer
+    NPC_TRAINER_ZABRAX              = 63310, // Monk Trainer
+
+    QUEST_PROVING_PIT_WARRIOR       = 24642,
+    QUEST_PROVING_PIT_PRIEST        = 24786,
+    QUEST_PROVING_PIT_MAGE          = 24754,
+    QUEST_PROVING_PIT_ROGUE         = 24774,
+    QUEST_PROVING_PIT_SHAMAN        = 24762,
+    QUEST_PROVING_PIT_HUNTER        = 24780,
+    QUEST_PROVING_PIT_DRUID         = 24768,
+    QUEST_PROVING_PIT_WARLOCK       = 26276,
+    QUEST_PROVING_PIT_MONK          = 31161,
+
+    SPELL_LEARN_ARCANE_MOMENTUM     = 232062,
+    SPELL_UNLEARN_ARCANE_MOMENTUM   = 232063,
+
+    SAY_NOT_BAD                     = 0,
+    SAY_WELL_DONE                   = 1,
+
+    POINT_INITIAL_HOME              = 1,
+};
+
+// Path point to proving pit fo trainers
+Position const EchoIslandTrainersPitPoints[9] =
+{
+    { -1158.99f, -5421.14f, 13.218976f, 0.2094395f },   // Nortet Pit
+    { -1137.0f, -5528.23f, 11.979752f, 3.1764990f },    // Tunari Pit
+    { -1145.95f, -5543.13f, 12.48863f, 1.7278759f },    // Seratha Pit
+    { -1146.67f, -5430.05f, 13.596256f, 1.4835298f },   // Legati Pit
+    { -1152.22f, -5407.6f, 13.263395f, 4.904375f },     // Nekali Pit
+    { -1136.46f, -5525.13f, 11.99673f, 3.3161256f },    // Ertezza Pit
+    { -1158.81f, -5533.08f, 11.939185f, 0.3141593f },   // Zentabra Pit
+    { -1149.92f, -5407.46f, 13.235063f, 4.956735f },    // Voldreka Pit
+    { -1151.54f, -5429.86f, 13.29182f, 1.256637f }      // Zabrax Pit
+};
+
+template<uint8 PitPos, uint32 QuestID>
+struct npc_echo_isles_class_trainer : public ScriptedAI
+{
+    npc_echo_isles_class_trainer(Creature* creature) : ScriptedAI(creature), _canMoveToPit(true) { }
+
+    void JustAppeared() override
+    {
+        _initialHomePosition = me->GetPosition();
+    }
+
+    void MovementInform(uint32 type, uint32 id) override
+    {
+        if (type == POINT_MOTION_TYPE && id == POINT_INITIAL_HOME)
+            _canMoveToPit = true;
+    }
+
+    void OnQuestAccept(Player* /*player*/, Quest const* quest) override
+    {
+        if (quest->GetQuestId() == QuestID)
+        {
+            if (_canMoveToPit)
+            {
+                _events.ScheduleEvent(EVENT_MOVE_TO_PIT, 2s);
+                _canMoveToPit = false;
+            }
+        }
+    }
+
+    void OnQuestReward(Player* /*player*/, Quest const* quest, LootItemType /*type*/, uint32 /*opt*/) override
+    {
+        if (quest->GetQuestId() == QuestID)
+            _events.RescheduleEvent(EVENT_MOVE_HOME, 60s);
+    }
+
+    bool OnGossipSelect(Player* player, uint32 menuId, uint32 gossipListId) override
+    {
+        // Use by Mage
+        if (menuId == GOSSIP_MENU_ARCANE_MOMENTUN)
+        {
+            CloseGossipMenuFor(player);
+
+            switch (gossipListId)
+            {
+                case GOSSIP_OPTION_TRAIN_MOMENTUM:
+                    player->CastSpell(player, SPELL_LEARN_ARCANE_MOMENTUM);
+                    break;
+                case GOSSIP_OPTION_UNTRAIN_MOMENTUM:
+                    player->CastSpell(player, SPELL_UNLEARN_ARCANE_MOMENTUM);
+                    break;
+                default:
+                    break;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_MOVE_TO_PIT:
+                    me->SetWalk(true);
+                    me->GetMotionMaster()->MovePoint(0, EchoIslandTrainersPitPoints[PitPos], true, EchoIslandTrainersPitPoints[PitPos].GetOrientation());
+                    _events.ScheduleEvent(EVENT_MOVE_HOME, 300s);
+                    break;
+                case EVENT_MOVE_HOME:
+                    me->SetWalk(true);
+                    me->GetMotionMaster()->MovePoint(POINT_INITIAL_HOME, _initialHomePosition, true, _initialHomePosition.GetOrientation());
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (!UpdateVictim())
+            return;
+    }
+
+private:
+    EventMap _events;
+    bool _canMoveToPit;
+    Position _initialHomePosition;
+};
+
+// 24639 - The Basics: Hitting Things (Warrior)
+// 24783 - The Basics: Hitting Things (Priest)
+// 24751 - The Basics: Hitting Things (Mage)
+// 24771 - The Basics: Hitting Things (Rogue)
+// 24759 - The Basics: Hitting Things (Shaman)
+// 24777 - The Basics: Hitting Things (Hunter)
+// 24765 - The Basics: Hitting Things (Druid)
+// 26273 - The Basics: Hitting Things (Warlock)
+// 31158 - The Basics: Hitting Things (Monk)
+template<uint32 TrainerEntry>
+class quest_the_basics_hitting_things : public QuestScript
+{
+public:
+    quest_the_basics_hitting_things(char const* scriptName) : QuestScript(scriptName) { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus /*oldStatus*/, QuestStatus newStatus) override
+    {
+        if (newStatus == QUEST_STATUS_COMPLETE)
+        {
+            if (Creature* creature = player->FindNearestCreature(TrainerEntry, 50.0f, true))
+                creature->AI()->Talk(SAY_NOT_BAD, player);
+        }
+    }
+};
+
+// 24642 - Proving Pit (Warrior)
+// 24786 - Proving Pit (Priest)
+// 24754 - Proving Pit (Mage)
+// 24774 - Proving Pit (Rogue)
+// 24762 - Proving Pit (Shaman)
+// 24780 - Proving Pit (Hunter)
+// 24768 - Proving Pit (Druid)
+// 26276 - Proving Pit (Warlock)
+// 31161 - Proving Pit (Monk)
+template<uint32 TrainerId>
+class quest_proving_pit : public QuestScript
+{
+public:
+    quest_proving_pit(char const* scriptName) : QuestScript(scriptName) { }
+
+    void OnQuestStatusChange(Player* player, Quest const* /*quest*/, QuestStatus /*oldStatus*/, QuestStatus newStatus) override
+    {
+        if (newStatus == QUEST_STATUS_COMPLETE)
+        {
+            if (Creature* creature = player->FindNearestCreature(TrainerId, 50.0f, true))
+                creature->AI()->Talk(SAY_WELL_DONE, player);
+        }
+    }
+};
+
+enum VoljinVisionData
+{
+    EVENT_VOLJIN_VISION_SCRIPT_1       = 1,
+    EVENT_VOLJIN_VISION_SCRIPT_2       = 2,
+    EVENT_VOLJIN_VISION_SCRIPT_3       = 3,
+    EVENT_VOLJIN_VISION_SCRIPT_4       = 4,
+    EVENT_VOLJIN_VISION_SCRIPT_5       = 5,
+    EVENT_VOLJIN_VISION_SCRIPT_6       = 6,
+    EVENT_VOLJIN_VISION_SCRIPT_7       = 7,
+    EVENT_VOLJIN_VISION_SCRIPT_8       = 8,
+    EVENT_VOLJIN_VISION_SCRIPT_9       = 9,
+    EVENT_VOLJIN_VISION_SCRIPT_10      = 10,
+    EVENT_VOLJIN_VISION_SCRIPT_11      = 11,
+    EVENT_VOLJIN_VISION_SCRIPT_12      = 12,
+    EVENT_VOLJIN_VISION_SCRIPT_13      = 13,
+    EVENT_VOLJIN_VISION_SCRIPT_14      = 14,
+    EVENT_VOLJIN_VISION_SCRIPT_15      = 15,
+    EVENT_VOLJIN_VISION_SCRIPT_16      = 16,
+    EVENT_VOLJIN_VISION_SCRIPT_17      = 17,
+    EVENT_VOLJIN_VISION_SCRIPT_18      = 18,
+    EVENT_VOLJIN_VISION_SCRIPT_19      = 19,
+    EVENT_VOLJIN_VISION_SCRIPT_20      = 20,
+    EVENT_VOLJIN_VISION_SCRIPT_21      = 21,
+    EVENT_VOLJIN_VISION_SCRIPT_22      = 22,
+
+    GOSSIP_MENU_GARROSH_VISION         = 11112,
+    GOSSIP_MENU_THRALL_VISION          = 11127,
+    GOSSIP_MENU_VISION_IN_PROGRESS     = 11126,
+
+    QUEST_MORE_THAN_EXPECTED_WARRIOR   = 24643,
+    QUEST_MORE_THAN_EXPECTED_MAGE      = 24755,
+    QUEST_MORE_THAN_EXPECTED_SHAMAN    = 24763,
+    QUEST_MORE_THAN_EXPECTED_ROGUE     = 24775,
+    QUEST_MORE_THAN_EXPECTED_HUNTER    = 24781,
+    QUEST_MORE_THAN_EXPECTED_PRIEST    = 24787,
+    QUEST_MORE_THAN_EXPECTED_DRUID     = 24769,
+    QUEST_MORE_THAN_EXPECTED_WARLOCK   = 26277,
+    QUEST_MORE_THAN_EXPECTED_MONK      = 31163,
+    QUEST_AN_ANCIENT_ENEMY             = 24814,
+
+    SAY_GORROSH_VISION_SCRIPT_TEXT_0   = 0,
+    SAY_GORROSH_VISION_SCRIPT_TEXT_1   = 1,
+    SAY_GORROSH_VISION_SCRIPT_TEXT_2   = 2,
+    SAY_GORROSH_VISION_SCRIPT_TEXT_3   = 3,
+    SAY_GORROSH_VISION_SCRIPT_TEXT_4   = 4,
+
+    SAY_VOLJIN_VISION_SCRIPT_TEXT_0    = 0,
+    SAY_VOLJIN_VISION_SCRIPT_TEXT_1    = 1,
+    SAY_VOLJIN_VISION_SCRIPT_TEXT_2    = 2,
+    SAY_VOLJIN_VISION_SCRIPT_TEXT_3    = 3,
+    SAY_VOLJIN_VISION_SCRIPT_TEXT_4    = 4,
+    SAY_VOLJIN_VISION_SCRIPT_TEXT_5    = 5,
+    SAY_VOLJIN_VISION_SCRIPT_TEXT_6    = 6,
+
+    SAY_THRALL_VISION_SCRIPT_TEXT_0    = 0,
+    SAY_THRALL_VISION_SCRIPT_TEXT_1    = 1,
+    SAY_THRALL_VISION_SCRIPT_TEXT_2    = 2,
+    SAY_THRALL_VISION_SCRIPT_TEXT_3    = 3,
+    SAY_THRALL_VISION_SCRIPT_TEXT_4    = 4,
+    SAY_THRALL_VISION_SCRIPT_TEXT_5    = 5,
+    SAY_THRALL_VISION_SCRIPT_TEXT_6    = 6,
+    SAY_THRALL_VISION_SCRIPT_TEXT_7    = 7,
+
+    SAY_VOLJIN_SCRIPT_TEXT_0           = 0,
+    SAY_VOLJIN_SCRIPT_TEXT_1           = 1,
+    SAY_VOLJIN_SCRIPT_TEXT_2           = 2,
+    SAY_VOLJIN_SCRIPT_TEXT_3           = 3,
+    SAY_VOLJIN_SCRIPT_TEXT_4           = 4,
+    SAY_VOLJIN_SCRIPT_TEXT_5           = 5,
+    SAY_VOLJIN_SCRIPT_TEXT_6           = 6,
+    SAY_VOLJIN_SCRIPT_TEXT_7           = 7,
+    SAY_VOLJIN_SCRIPT_TEXT_8           = 8,
+    SAY_VOLJIN_SCRIPT_TEXT_9           = 9,
+    SAY_VOLJIN_SCRIPT_TEXT_10          = 10,
+    SAY_VOLJIN_SCRIPT_TEXT_11          = 11,
+    SAY_VOLJIN_SCRIPT_TEXT_12          = 12,
+    SAY_VOLJIN_SCRIPT_TEXT_13          = 13,
+    SAY_VOLJIN_SCRIPT_TEXT_14          = 14,
+
+    SPELL_RITES_OF_VISION              = 73169,
+    SPELL_VOLJINS_VISION_SMOKE         = 73158,
+    SPELL_GENERIC_QUEST_INVISIBILITY_1 = 49414,
+    SPELL_GENERIC_QUEST_INVISIBILITY_2 = 49415,
+    SPELL_GENERIC_QUEST_INVISIBILITY_8 = 78718,
+};
+
+// 38966 - Vol'jin (specific script for guid 309032)
+struct npc_voljin_garrosh_vision : public ScriptedAI
+{
+    npc_voljin_garrosh_vision(Creature* creature) : ScriptedAI(creature), _scriptRunning(false) { }
+
+    void JustAppeared() override
+    {
+        me->SetGossipMenuId(GOSSIP_MENU_GARROSH_VISION);
+
+        Creature* garrosh = me->FindNearestCreatureWithOptions(10.0f, { .StringId = "vision_of_garrosh", .IgnorePhases = true });
+        Creature* voljin = me->FindNearestCreatureWithOptions(10.0f, { .StringId = "vision_of_voljin", .IgnorePhases = true });
+        Creature* bunny = me->FindNearestCreatureWithOptions(10.0f, { .StringId = "vision_brazier_bunny_garrosh", .IgnorePhases = true });
+        GameObject* brazier = me->FindNearestGameObjectWithOptions(10.0f, { .StringId = "vision_brazier_garrosh_voljin", .IgnorePhases = true });
+
+        if (!garrosh || !voljin || !bunny || !brazier)
+            return;
+
+        _garroshGUID = garrosh->GetGUID();
+        _voljinGUID = voljin->GetGUID();
+        _bunnyGUID = bunny->GetGUID();
+        _brazierGUID = brazier->GetGUID();
+    }
+
+    void OnQuestReward(Player* /*player*/, Quest const* quest, LootItemType /*type*/, uint32 /*opt*/) override
+    {
+        if (_scriptRunning)
+            return;
+
+        switch (quest->GetQuestId())
+        {
+            case QUEST_MORE_THAN_EXPECTED_WARRIOR:
+            case QUEST_MORE_THAN_EXPECTED_MAGE:
+            case QUEST_MORE_THAN_EXPECTED_SHAMAN:
+            case QUEST_MORE_THAN_EXPECTED_ROGUE:
+            case QUEST_MORE_THAN_EXPECTED_HUNTER:
+            case QUEST_MORE_THAN_EXPECTED_PRIEST:
+            case QUEST_MORE_THAN_EXPECTED_DRUID:
+            case QUEST_MORE_THAN_EXPECTED_WARLOCK:
+            case QUEST_MORE_THAN_EXPECTED_MONK:
+                _scriptRunning = true;
+                _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_1, 0s);
+                break;
+            default:
+                break;
+        }
+    }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 /*gossipListId*/) override
+    {
+        CloseGossipMenuFor(player);
+        _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_1, 0s);
+        _scriptRunning = true;
+        return false;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!_scriptRunning)
+            return;
+
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_VOLJIN_VISION_SCRIPT_1:
+                {
+                    me->SetGossipMenuId(GOSSIP_MENU_VISION_IN_PROGRESS);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_2, 0s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_2:
+                {
+                    me->SetFacingTo(3.97935f);
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_0);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_3, 3s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_3:
+                {
+                    DoCastSelf(SPELL_RITES_OF_VISION);
+                    if (Creature* bunny = ObjectAccessor::GetCreature(*me, _bunnyGUID))
+                        bunny->AI()->DoCastSelf(SPELL_VOLJINS_VISION_SMOKE);
+                    if (GameObject* brazier = ObjectAccessor::GetGameObject(*me, _brazierGUID))
+                        brazier->SetGoState(GO_STATE_ACTIVE);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_4, 4s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_4:
+                {
+                    if (Creature* garrosh = ObjectAccessor::GetCreature(*me, _garroshGUID))
+                    {
+                        garrosh->AI()->DoCastSelf(SPELL_GENERIC_QUEST_INVISIBILITY_1);
+                        garrosh->RemoveAura(SPELL_GENERIC_QUEST_INVISIBILITY_8);
+                    }
+
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_5, 1s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_5:
+                {
+                    if (Creature* garrosh = ObjectAccessor::GetCreature(*me, _garroshGUID))
+                        garrosh->AI()->Talk(SAY_GORROSH_VISION_SCRIPT_TEXT_0);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_6, 7s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_6:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                    {
+                        voljin->AI()->DoCastSelf(SPELL_GENERIC_QUEST_INVISIBILITY_1);
+                        voljin->RemoveAura(SPELL_GENERIC_QUEST_INVISIBILITY_8);
+                    }
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_7, 4s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_7:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                        voljin->AI()->Talk(SAY_VOLJIN_VISION_SCRIPT_TEXT_0);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_8, 11s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_8:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                        voljin->AI()->Talk(SAY_VOLJIN_VISION_SCRIPT_TEXT_1);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_9, 6s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_9:
+                {
+                    if (Creature* garrosh = ObjectAccessor::GetCreature(*me, _garroshGUID))
+                        garrosh->AI()->Talk(SAY_GORROSH_VISION_SCRIPT_TEXT_1);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_10, 11s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_10:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                        voljin->AI()->Talk(SAY_VOLJIN_VISION_SCRIPT_TEXT_2);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_11, 11s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_11:
+                {
+                    if (Creature* garrosh = ObjectAccessor::GetCreature(*me, _garroshGUID))
+                        garrosh->AI()->Talk(SAY_GORROSH_VISION_SCRIPT_TEXT_2);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_12, 16s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_12:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                        voljin->AI()->Talk(SAY_VOLJIN_VISION_SCRIPT_TEXT_3);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_13, 16s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_13:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                        voljin->AI()->Talk(SAY_VOLJIN_VISION_SCRIPT_TEXT_4);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_14, 15s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_14:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                        voljin->AI()->Talk(SAY_VOLJIN_VISION_SCRIPT_TEXT_5);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_15, 17s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_15:
+                {
+                    if (Creature* garrosh = ObjectAccessor::GetCreature(*me, _garroshGUID))
+                        garrosh->AI()->Talk(SAY_GORROSH_VISION_SCRIPT_TEXT_3);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_16, 3s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_16:
+                {
+                    if (Creature* garrosh = ObjectAccessor::GetCreature(*me, _garroshGUID))
+                        garrosh->AI()->Talk(SAY_GORROSH_VISION_SCRIPT_TEXT_4);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_17, 3s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_17:
+                {
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                        voljin->AI()->Talk(SAY_VOLJIN_VISION_SCRIPT_TEXT_6);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_18, 9s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_18:
+                {
+                    me->RemoveAura(SPELL_RITES_OF_VISION);
+                    if (Creature* garrosh = ObjectAccessor::GetCreature(*me, _garroshGUID))
+                    {
+                        garrosh->AI()->DoCastSelf(SPELL_GENERIC_QUEST_INVISIBILITY_8);
+                        garrosh->RemoveAura(SPELL_GENERIC_QUEST_INVISIBILITY_1);
+                    }
+
+                    if (Creature* voljin = ObjectAccessor::GetCreature(*me, _voljinGUID))
+                    {
+                        voljin->AI()->DoCastSelf(SPELL_GENERIC_QUEST_INVISIBILITY_8);
+                        voljin->RemoveAura(SPELL_GENERIC_QUEST_INVISIBILITY_1);
+                    }
+                    if (Creature* bunny = ObjectAccessor::GetCreature(*me, _bunnyGUID))
+                        bunny->RemoveAura(SPELL_VOLJINS_VISION_SMOKE);
+                    if (GameObject* brazier = ObjectAccessor::GetGameObject(*me, _brazierGUID))
+                        brazier->SetGoState(GO_STATE_READY);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_19, 2s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_19:
+                {
+                    me->SetFacingTo(0.837758f);
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_1);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_20, 9s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_20:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_2);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_21, 16s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_21:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_3);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_22, 8s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_22:
+                {
+                    me->SetGossipMenuId(GOSSIP_MENU_GARROSH_VISION);
+                    _scriptRunning = false;
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+    bool _scriptRunning;
+    ObjectGuid _garroshGUID;
+    ObjectGuid _voljinGUID;
+    ObjectGuid _bunnyGUID;
+    ObjectGuid _brazierGUID;
+};
+
+// 38966 - Vol'jin (specific script for guid 3000469)
+struct npc_voljin_thrall_vision : public ScriptedAI
+{
+    npc_voljin_thrall_vision(Creature* creature) : ScriptedAI(creature), _scriptRunning(false) { }
+
+    void JustAppeared() override
+    {
+        me->SetGossipMenuId(GOSSIP_MENU_THRALL_VISION);
+
+        Creature* thrall = me->FindNearestCreatureWithOptions(10.0f, { .StringId = "vision_of_thrall", .IgnorePhases = true });
+        Creature* bunny = me->FindNearestCreatureWithOptions(10.0f, { .StringId = "vision_brazier_bunny_thrall", .IgnorePhases = true });
+        GameObject* brazier = me->FindNearestGameObjectWithOptions(10.0f, { .StringId = "vision_brazier_thrall", .IgnorePhases = true });
+
+        if (!thrall || !bunny || !brazier)
+            return;
+
+        _thrallGUID = thrall->GetGUID();
+        _bunnyGUID = bunny->GetGUID();
+        _brazierGUID = brazier->GetGUID();
+    }
+
+    void OnQuestReward(Player* /*player*/, Quest const* quest, LootItemType /*type*/, uint32 /*opt*/) override
+    {
+        if (_scriptRunning)
+            return;
+
+        if (quest->GetQuestId() == QUEST_AN_ANCIENT_ENEMY)
+        {
+            _scriptRunning = true;
+            _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_1, 0s);
+        }
+    }
+
+    bool OnGossipSelect(Player* player, uint32 /*menuId*/, uint32 /*gossipListId*/) override
+    {
+        _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_1, 0s);
+        CloseGossipMenuFor(player);
+        _scriptRunning = true;
+        return false;
+    }
+
+    void UpdateAI(uint32 diff) override
+    {
+        if (!_scriptRunning)
+            return;
+
+        _events.Update(diff);
+
+        while (uint32 eventId = _events.ExecuteEvent())
+        {
+            switch (eventId)
+            {
+                case EVENT_VOLJIN_VISION_SCRIPT_1:
+                {
+                    me->SetGossipMenuId(GOSSIP_MENU_VISION_IN_PROGRESS);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_2, 0s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_2:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_4);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_3, 9s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_3:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_5);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_4, 8s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_4:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_6);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_5, 7s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_5:
+                {
+                    DoCastSelf(SPELL_RITES_OF_VISION);
+                    me->SetFacingTo(3.97935f);
+                    if (Creature* bunny = ObjectAccessor::GetCreature(*me, _bunnyGUID))
+                        bunny->AI()->DoCastSelf(SPELL_VOLJINS_VISION_SMOKE);
+                    if (GameObject* brazier = ObjectAccessor::GetGameObject(*me, _brazierGUID))
+                        brazier->SetGoState(GO_STATE_ACTIVE);
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                    {
+                        thrall->AI()->DoCastSelf(SPELL_GENERIC_QUEST_INVISIBILITY_2);
+                        thrall->RemoveAura(SPELL_GENERIC_QUEST_INVISIBILITY_8);
+                    }
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_6, 5s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_6:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_0);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_7, 4s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_7:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_7);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_8, 6s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_8:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_1);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_9, 11s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_9:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_8);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_10, 18s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_10:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_2);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_11, 6s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_11:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_3);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_12, 12s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_12:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_4);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_13, 18s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_13:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_5);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_14, 17s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_14:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_6);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_15, 9s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_15:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_9);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_16, 11s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_16:
+                {
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                        thrall->AI()->Talk(SAY_THRALL_VISION_SCRIPT_TEXT_7);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_17, 6s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_17:
+                {
+                    me->RemoveAura(SPELL_RITES_OF_VISION);
+                    me->SetFacingTo(0.837758f);
+                    if (Creature* thrall = ObjectAccessor::GetCreature(*me, _thrallGUID))
+                    {
+                        thrall->AI()->DoCastSelf(SPELL_GENERIC_QUEST_INVISIBILITY_8);
+                        thrall->RemoveAura(SPELL_GENERIC_QUEST_INVISIBILITY_2);
+                    }
+                    if (Creature* bunny = ObjectAccessor::GetCreature(*me, _bunnyGUID))
+                        bunny->RemoveAura(SPELL_VOLJINS_VISION_SMOKE);
+                    if (GameObject* brazier = ObjectAccessor::GetGameObject(*me, _brazierGUID))
+                        brazier->SetGoState(GO_STATE_READY);
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_10);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_18, 8s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_18:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_11);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_19, 9s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_19:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_12);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_20, 17s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_20:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_13);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_21, 11s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_21:
+                {
+                    Talk(SAY_VOLJIN_SCRIPT_TEXT_14);
+                    _events.ScheduleEvent(EVENT_VOLJIN_VISION_SCRIPT_22, 11s);
+                    break;
+                }
+                case EVENT_VOLJIN_VISION_SCRIPT_22:
+                {
+                    me->SetGossipMenuId(GOSSIP_MENU_THRALL_VISION);
+                    _scriptRunning = false;
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
+private:
+    EventMap _events;
+    bool _scriptRunning;
+    ObjectGuid _thrallGUID;
+    ObjectGuid _bunnyGUID;
+    ObjectGuid _brazierGUID;
 };
 
 void AddSC_durotar()
 {
     new npc_lazy_peon();
-    new npc_tiger_matriarch_credit();
-    new npc_tiger_matriarch();
-    new npc_troll_volunteer();
-    new spell_mount_check();
-    new spell_voljin_war_drums();
-    new spell_voodoo();
+    RegisterSpellScript(spell_voodoo);
+    RegisterCreatureAI(npc_mithaka);
+
+    // Echo Isles
+    RegisterSpellScript(spell_durotar_summon_zuni);
+    RegisterCreatureAI(npc_durotar_tiki_target);
+    RegisterCreatureAI(npc_darkspear_jailor);
+    RegisterCreatureAI(npc_captive_spitescale_scout);
+    new GenericCreatureScript<npc_echo_isles_class_trainer<0, QUEST_PROVING_PIT_WARRIOR>>("npc_nortet");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<1, QUEST_PROVING_PIT_PRIEST>>("npc_tunari");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<2, QUEST_PROVING_PIT_MAGE>>("npc_seratha");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<3, QUEST_PROVING_PIT_ROGUE>>("npc_legati");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<4, QUEST_PROVING_PIT_SHAMAN>>("npc_nekali");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<5, QUEST_PROVING_PIT_HUNTER>>("npc_ertezza");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<6, QUEST_PROVING_PIT_DRUID>>("npc_zentabra");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<7, QUEST_PROVING_PIT_WARLOCK>>("npc_voldreka");
+    new GenericCreatureScript<npc_echo_isles_class_trainer<8, QUEST_PROVING_PIT_MONK>>("npc_zabrax");
+    new quest_the_basics_hitting_things<NPC_TRAINER_NORTET>("quest_the_basics_hitting_things_warrior");
+    new quest_the_basics_hitting_things<NPC_TRAINER_TUNARI>("quest_the_basics_hitting_things_priest");
+    new quest_the_basics_hitting_things<NPC_TRAINER_SERATHA>("quest_the_basics_hitting_things_mage");
+    new quest_the_basics_hitting_things<NPC_TRAINER_LEGATI>("quest_the_basics_hitting_things_rogue");
+    new quest_the_basics_hitting_things<NPC_TRAINER_NEKALI>("quest_the_basics_hitting_things_shaman");
+    new quest_the_basics_hitting_things<NPC_TRAINER_ERTEZZA>("quest_the_basics_hitting_things_hunter");
+    new quest_the_basics_hitting_things<NPC_TRAINER_ZENTABRA>("quest_the_basics_hitting_things_druid");
+    new quest_the_basics_hitting_things<NPC_TRAINER_VOLDREKA>("quest_the_basics_hitting_things_warlock");
+    new quest_the_basics_hitting_things<NPC_TRAINER_ZABRAX>("quest_the_basics_hitting_things_monk");
+    new quest_proving_pit<NPC_TRAINER_NORTET>("quest_proving_pit_warrior");
+    new quest_proving_pit<NPC_TRAINER_TUNARI>("quest_proving_pit_priest");
+    new quest_proving_pit<NPC_TRAINER_SERATHA>("quest_proving_pit_mage");
+    new quest_proving_pit<NPC_TRAINER_LEGATI>("quest_proving_pit_rogue");
+    new quest_proving_pit<NPC_TRAINER_NEKALI>("quest_proving_pit_shaman");
+    new quest_proving_pit<NPC_TRAINER_ERTEZZA>("quest_proving_pit_hunter");
+    new quest_proving_pit<NPC_TRAINER_ZENTABRA>("quest_proving_pit_druid");
+    new quest_proving_pit<NPC_TRAINER_VOLDREKA>("quest_proving_pit_warlock");
+    new quest_proving_pit<NPC_TRAINER_ZABRAX>("quest_proving_pit_monk");
+    RegisterCreatureAI(npc_voljin_garrosh_vision);
+    RegisterCreatureAI(npc_voljin_thrall_vision);
 }

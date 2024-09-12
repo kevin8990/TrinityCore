@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,8 +16,15 @@
  */
 
 #include "ScriptMgr.h"
+#include "CreatureAI.h"
+#include "EventMap.h"
+#include "GameObject.h"
 #include "InstanceScript.h"
 #include "magisters_terrace.h"
+#include "Map.h"
+#include "MotionMaster.h"
+#include "TemporarySummon.h"
+#include <sstream>
 
 /*
 0  - Selin Fireheart
@@ -26,35 +33,58 @@
 3  - Kael'thas Sunstrider
 */
 
+ObjectData const creatureData[] =
+{
+    { BOSS_SELIN_FIREHEART,         DATA_SELIN_FIREHEART        },
+    { BOSS_VEXALLUS,                DATA_VEXALLUS               },
+    { BOSS_PRIESTESS_DELRISSA,      DATA_PRIESTESS_DELRISSA     },
+    { BOSS_KAELTHAS_SUNSTRIDER,     DATA_KAELTHAS_SUNSTRIDER    },
+    { NPC_KALECGOS,                 DATA_KALECGOS               },
+    { NPC_HUMAN_KALECGOS,           DATA_KALECGOS               },
+    { 0,                            0                           } // END
+};
+
+ObjectData const gameObjectData[] =
+{
+    { GO_ESCAPE_ORB,                DATA_ESCAPE_ORB             },
+    { 0,                            0                           } // END
+};
+
 DoorData const doorData[] =
 {
-    { GO_SELIN_DOOR,           DATA_SELIN,    DOOR_TYPE_PASSAGE, BOUNDARY_NONE },
-    { GO_SELIN_ENCOUNTER_DOOR, DATA_SELIN,    DOOR_TYPE_ROOM,    BOUNDARY_NONE },
-    { GO_VEXALLUS_DOOR,        DATA_VEXALLUS, DOOR_TYPE_PASSAGE, BOUNDARY_NONE },
-    { GO_DELRISSA_DOOR,        DATA_DELRISSA, DOOR_TYPE_PASSAGE, BOUNDARY_NONE },
-    { GO_KAEL_DOOR,            DATA_KAELTHAS, DOOR_TYPE_ROOM,    BOUNDARY_NONE },
-    { 0,                       0,             DOOR_TYPE_ROOM,    BOUNDARY_NONE } // END
+    { GO_SUNWELL_RAID_GATE_2  , DATA_SELIN_FIREHEART,       EncounterDoorBehavior::OpenWhenDone },
+    { GO_ASSEMBLY_CHAMBER_DOOR, DATA_SELIN_FIREHEART,       EncounterDoorBehavior::OpenWhenNotInProgress },
+    { GO_SUNWELL_RAID_GATE_5,   DATA_VEXALLUS,              EncounterDoorBehavior::OpenWhenDone },
+    { GO_SUNWELL_RAID_GATE_4,   DATA_PRIESTESS_DELRISSA,    EncounterDoorBehavior::OpenWhenDone },
+    { GO_ASYLUM_DOOR,           DATA_KAELTHAS_SUNSTRIDER,   EncounterDoorBehavior::OpenWhenNotInProgress },
+    { 0,                        0,                          EncounterDoorBehavior::OpenWhenNotInProgress } // END
 };
+
+DungeonEncounterData const encounters[] =
+{
+    { DATA_SELIN_FIREHEART, {{ 1897 }} },
+    { DATA_VEXALLUS, {{ 1898 }} },
+    { DATA_PRIESTESS_DELRISSA, {{ 1895 }} },
+    { DATA_KAELTHAS_SUNSTRIDER, {{ 1894 }} }
+};
+
+Position const KalecgosSpawnPos = { 164.3747f, -397.1197f, 2.151798f, 1.66219f };
+Position const KaelthasTrashGroupDistanceComparisonPos = { 150.0f, 141.0f, -14.4f };
 
 class instance_magisters_terrace : public InstanceMapScript
 {
     public:
-        instance_magisters_terrace() : InstanceMapScript("instance_magisters_terrace", 585) { }
+        instance_magisters_terrace() : InstanceMapScript(MGTScriptName, 585) { }
 
         struct instance_magisters_terrace_InstanceMapScript : public InstanceScript
         {
-            instance_magisters_terrace_InstanceMapScript(Map* map) : InstanceScript(map)
+            instance_magisters_terrace_InstanceMapScript(InstanceMap* map) : InstanceScript(map), _delrissaDeathCount(0)
             {
+                SetHeaders(DataHeader);
                 SetBossNumber(EncounterCount);
+                LoadObjectData(creatureData, gameObjectData);
                 LoadDoorData(doorData);
-
-                DelrissaDeathCount = 0;
-
-                SelinGUID          = 0;
-                DelrissaGUID       = 0;
-                EscapeOrbGUID      = 0;
-
-                memset(KaelStatue, 0, 2 * sizeof(uint64));
+                LoadDungeonEncounterData(encounters);
             }
 
             uint32 GetData(uint32 type) const override
@@ -62,7 +92,7 @@ class instance_magisters_terrace : public InstanceMapScript
                 switch (type)
                 {
                     case DATA_DELRISSA_DEATH_COUNT:
-                        return DelrissaDeathCount;
+                        return _delrissaDeathCount;
                     default:
                         break;
                 }
@@ -75,13 +105,9 @@ class instance_magisters_terrace : public InstanceMapScript
                 {
                     case DATA_DELRISSA_DEATH_COUNT:
                         if (data == SPECIAL)
-                            ++DelrissaDeathCount;
+                            _delrissaDeathCount++;
                         else
-                            DelrissaDeathCount = 0;
-                        break;
-                    case DATA_KAELTHAS_STATUES:
-                        HandleGameObject(KaelStatue[0], data != 0);
-                        HandleGameObject(KaelStatue[1], data != 0);
+                            _delrissaDeathCount = 0;
                         break;
                     default:
                         break;
@@ -90,13 +116,44 @@ class instance_magisters_terrace : public InstanceMapScript
 
             void OnCreatureCreate(Creature* creature) override
             {
+                InstanceScript::OnCreatureCreate(creature);
+
                 switch (creature->GetEntry())
                 {
-                    case NPC_SELIN:
-                        SelinGUID = creature->GetGUID();
+                    case NPC_COILSKAR_WITCH:
+                    case NPC_SUNBLADE_WARLOCK:
+                    case NPC_SUNBLADE_MAGE_GUARD:
+                    case NPC_SISTER_OF_TORMENT:
+                    case NPC_ETHEREUM_SMUGGLER:
+                    case NPC_SUNBLADE_BLOOD_KNIGHT:
+                        if (creature->GetDistance(KaelthasTrashGroupDistanceComparisonPos) < 10.0f)
+                            _kaelthasPreTrashGUIDs.insert(creature->GetGUID());
                         break;
-                    case NPC_DELRISSA:
-                        DelrissaGUID = creature->GetGUID();
+                    default:
+                        break;
+                }
+            }
+
+            void OnUnitDeath(Unit* unit) override
+            {
+                if (unit->GetTypeId() != TYPEID_UNIT)
+                    return;
+
+                switch (unit->GetEntry())
+                {
+                    case NPC_COILSKAR_WITCH:
+                    case NPC_SUNBLADE_WARLOCK:
+                    case NPC_SUNBLADE_MAGE_GUARD:
+                    case NPC_SISTER_OF_TORMENT:
+                    case NPC_ETHEREUM_SMUGGLER:
+                    case NPC_SUNBLADE_BLOOD_KNIGHT:
+                        if (_kaelthasPreTrashGUIDs.find(unit->GetGUID()) != _kaelthasPreTrashGUIDs.end())
+                        {
+                            _kaelthasPreTrashGUIDs.erase(unit->GetGUID());
+                            if (_kaelthasPreTrashGUIDs.size() == 0)
+                                if (Creature* kaelthas = GetCreature(DATA_KAELTHAS_SUNSTRIDER))
+                                    kaelthas->AI()->SetData(DATA_KAELTHAS_INTRO, IN_PROGRESS);
+                        }
                         break;
                     default:
                         break;
@@ -105,42 +162,37 @@ class instance_magisters_terrace : public InstanceMapScript
 
             void OnGameObjectCreate(GameObject* go) override
             {
+                InstanceScript::OnGameObjectCreate(go);
+
                 switch (go->GetEntry())
                 {
-                    case GO_VEXALLUS_DOOR:
-                    case GO_SELIN_DOOR:
-                    case GO_SELIN_ENCOUNTER_DOOR:
-                    case GO_DELRISSA_DOOR:
-                    case GO_KAEL_DOOR:
-                        AddDoor(go, true);
-                        break;
-                    case GO_KAEL_STATUE_1:
-                        KaelStatue[0] = go->GetGUID();
-                        break;
-                    case GO_KAEL_STATUE_2:
-                        KaelStatue[1] = go->GetGUID();
-                        break;
                     case GO_ESCAPE_ORB:
-                        EscapeOrbGUID = go->GetGUID();
+                        if (GetBossState(DATA_KAELTHAS_SUNSTRIDER) == DONE)
+                            go->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
                         break;
                     default:
                         break;
                 }
             }
 
-            void OnGameObjectRemove(GameObject* go) override
+            void ProcessEvent(WorldObject* /*obj*/, uint32 eventId, WorldObject* /*invoker*/) override
             {
-                switch (go->GetEntry())
+                if (eventId == EVENT_SPAWN_KALECGOS)
+                    if (!GetCreature(DATA_KALECGOS) && _events.Empty())
+                        _events.ScheduleEvent(EVENT_SPAWN_KALECGOS, 1min);
+            }
+
+            void Update(uint32 diff) override
+            {
+                _events.Update(diff);
+
+                if (_events.ExecuteEvent() == EVENT_SPAWN_KALECGOS)
                 {
-                    case GO_VEXALLUS_DOOR:
-                    case GO_SELIN_DOOR:
-                    case GO_SELIN_ENCOUNTER_DOOR:
-                    case GO_DELRISSA_DOOR:
-                    case GO_KAEL_DOOR:
-                        AddDoor(go, false);
-                        break;
-                    default:
-                        break;
+                    if (Creature* kalecgos = instance->SummonCreature(NPC_KALECGOS, KalecgosSpawnPos))
+                    {
+                        kalecgos->GetMotionMaster()->MovePath(PATH_KALECGOS_FLIGHT, false);
+                        kalecgos->AI()->Talk(SAY_KALECGOS_SPAWN);
+                    }
                 }
             }
 
@@ -151,9 +203,14 @@ class instance_magisters_terrace : public InstanceMapScript
 
                 switch (type)
                 {
-                    case DATA_DELRISSA:
+                    case DATA_PRIESTESS_DELRISSA:
                         if (state == IN_PROGRESS)
-                            DelrissaDeathCount = 0;
+                            _delrissaDeathCount = 0;
+                        break;
+                    case DATA_KAELTHAS_SUNSTRIDER:
+                        if (state == DONE)
+                            if (GameObject* orb = GetGameObject(DATA_ESCAPE_ORB))
+                                orb->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
                         break;
                     default:
                         break;
@@ -161,74 +218,10 @@ class instance_magisters_terrace : public InstanceMapScript
                 return true;
             }
 
-            std::string GetSaveData() override
-            {
-                OUT_SAVE_INST_DATA;
-
-                std::ostringstream saveStream;
-                saveStream << "M T " << GetBossSaveData();
-
-                OUT_SAVE_INST_DATA_COMPLETE;
-                return saveStream.str();
-            }
-
-            void Load(const char* str) override
-            {
-                if (!str)
-                {
-                    OUT_LOAD_INST_DATA_FAIL;
-                    return;
-                }
-
-                OUT_LOAD_INST_DATA(str);
-
-                char dataHead1, dataHead2;
-
-                std::istringstream loadStream(str);
-                loadStream >> dataHead1 >> dataHead2;
-                if (dataHead1 == 'M' && dataHead2 == 'T')
-                {
-                    for (uint32 i = 0; i < EncounterCount; ++i)
-                    {
-                        uint32 tmpState;
-                        loadStream >> tmpState;
-                        if (tmpState == IN_PROGRESS || tmpState > SPECIAL)
-                            tmpState = NOT_STARTED;
-                        SetBossState(i, EncounterState(tmpState));
-                    }
-                }
-                else
-                    OUT_LOAD_INST_DATA_FAIL;
-
-                OUT_LOAD_INST_DATA_COMPLETE;
-            }
-
-            uint64 GetData64(uint32 type) const override
-            {
-                switch (type)
-                {
-                    case DATA_SELIN:
-                        return SelinGUID;
-                    case DATA_DELRISSA:
-                        return DelrissaGUID;
-                    case DATA_KAEL_STATUE_LEFT:
-                        return KaelStatue[0];
-                    case DATA_KAEL_STATUE_RIGHT:
-                        return KaelStatue[1];
-                    case DATA_ESCAPE_ORB:
-                        return EscapeOrbGUID;
-                    default:
-                        break;
-                }
-                return 0;
-            }
-
         protected:
-            uint64 SelinGUID;
-            uint64 DelrissaGUID;
-            uint64 KaelStatue[2];
-            uint64 EscapeOrbGUID;
-            uint32 DelrissaDeathCount;
+            EventMap _events;
+            GuidSet _kaelthasPreTrashGUIDs;
+            uint8 _delrissaDeathCount;
         };
 
         InstanceScript* GetInstanceScript(InstanceMap* map) const override

@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2006-2009 ScriptDev2 <https://scriptdev2.svn.sourceforge.net/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -24,8 +23,11 @@ SDCategory: Gruul's Lair
 EndScriptData */
 
 #include "ScriptMgr.h"
-#include "ScriptedCreature.h"
 #include "gruuls_lair.h"
+#include "InstanceScript.h"
+#include "MotionMaster.h"
+#include "ObjectAccessor.h"
+#include "ScriptedCreature.h"
 
 enum HighKingMaulgar
 {
@@ -77,7 +79,19 @@ public:
     {
         boss_high_king_maulgarAI(Creature* creature) : ScriptedAI(creature)
         {
+            Initialize();
             instance = creature->GetInstanceScript();
+        }
+
+        void Initialize()
+        {
+            ArcingSmash_Timer = 10000;
+            MightyBlow_Timer = 40000;
+            Whirlwind_Timer = 30000;
+            Charging_Timer = 0;
+            Roar_Timer = 0;
+
+            Phase2 = false;
         }
 
         InstanceScript* instance;
@@ -92,15 +106,9 @@ public:
 
         void Reset() override
         {
-            ArcingSmash_Timer = 10000;
-            MightyBlow_Timer = 40000;
-            Whirlwind_Timer = 30000;
-            Charging_Timer = 0;
-            Roar_Timer = 0;
+            Initialize();
 
             DoCast(me, SPELL_DUAL_WIELD, false);
-
-            Phase2 = false;
 
             instance->SetBossState(DATA_MAULGAR, NOT_STARTED);
         }
@@ -117,13 +125,13 @@ public:
             instance->SetBossState(DATA_MAULGAR, DONE);
         }
 
-        void DoAction(int32 actionId)
+        void DoAction(int32 actionId) override
         {
             if (actionId == ACTION_ADD_DEATH)
                 Talk(SAY_OGRE_DEATH);
         }
 
-        void EnterCombat(Unit* /*who*/) override
+        void JustEngagedWith(Unit* /*who*/) override
         {
             DoZoneInCombat();
             instance->SetBossState(DATA_MAULGAR, IN_PROGRESS);
@@ -143,11 +151,11 @@ public:
             } else ArcingSmash_Timer -= diff;
 
             //Whirlwind_Timer
-                   if (Whirlwind_Timer <= diff)
-                   {
-                        DoCastVictim(SPELL_WHIRLWIND);
-                        Whirlwind_Timer = 55000;
-                   } else Whirlwind_Timer -= diff;
+            if (Whirlwind_Timer <= diff)
+            {
+                DoCastVictim(SPELL_WHIRLWIND);
+                Whirlwind_Timer = 55000;
+            } else Whirlwind_Timer -= diff;
 
             //MightyBlow_Timer
             if (MightyBlow_Timer <= diff)
@@ -163,8 +171,8 @@ public:
                 Talk(SAY_ENRAGE);
 
                 DoCast(me, SPELL_DUAL_WIELD, true);
-                me->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID, 0);
-                me->SetUInt32Value(UNIT_VIRTUAL_ITEM_SLOT_ID+1, 0);
+                me->SetVirtualItem(0, 0);
+                me->SetVirtualItem(1, 0);
             }
 
             if (Phase2)
@@ -172,9 +180,7 @@ public:
                 //Charging_Timer
                 if (Charging_Timer <= diff)
                 {
-                    Unit* target = NULL;
-                    target = SelectTarget(SELECT_TARGET_RANDOM, 0);
-                    if (target)
+                    if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0))
                     {
                         AttackStart(target);
                         DoCast(target, SPELL_BERSERKER_C);
@@ -189,8 +195,6 @@ public:
                     Roar_Timer = 40000 + (rand32() % 10000);
                 } else Roar_Timer -= diff;
             }
-
-            DoMeleeAttackIfReady();
         }
     };
 
@@ -209,20 +213,26 @@ public:
     {
         boss_olm_the_summonerAI(Creature* creature) : ScriptedAI(creature)
         {
+            Initialize();
             instance = creature->GetInstanceScript();
+        }
+
+        void Initialize()
+        {
+            DarkDecay_Timer = 10000;
+            Summon_Timer = 15000;
+            DeathCoil_Timer = 20000;
         }
 
         uint32 DarkDecay_Timer;
         uint32 Summon_Timer;
-           uint32 DeathCoil_Timer;
+        uint32 DeathCoil_Timer;
 
         InstanceScript* instance;
 
         void Reset() override
         {
-            DarkDecay_Timer = 10000;
-            Summon_Timer = 15000;
-            DeathCoil_Timer = 20000;
+            Initialize();
 
             instance->SetBossState(DATA_MAULGAR, NOT_STARTED);
         }
@@ -234,7 +244,7 @@ public:
 
             if (me->Attack(who, true))
             {
-                me->AddThreat(who, 0.0f);
+                AddThreat(who, 0.0f);
                 me->SetInCombatWith(who);
                 who->SetInCombatWith(me);
 
@@ -242,7 +252,7 @@ public:
             }
         }
 
-        void EnterCombat(Unit* /*who*/) override
+        void JustEngagedWith(Unit* /*who*/) override
         {
             DoZoneInCombat();
             instance->SetBossState(DATA_MAULGAR, IN_PROGRESS);
@@ -250,7 +260,7 @@ public:
 
         void JustDied(Unit* /*killer*/) override
         {
-            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetData64(DATA_MAULGAR)))
+            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetGuidData(DATA_MAULGAR)))
                 maulgar->AI()->DoAction(ACTION_ADD_DEATH);
 
             instance->SetBossState(DATA_MAULGAR, DONE);
@@ -278,14 +288,10 @@ public:
             //DeathCoil Timer /need correct timer
             if (DeathCoil_Timer <= diff)
             {
-                Unit* target = NULL;
-                target = SelectTarget(SELECT_TARGET_RANDOM, 0);
-                if (target)
+                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0))
                     DoCast(target, SPELL_DEATH_COIL);
                 DeathCoil_Timer = 20000;
             } else DeathCoil_Timer -= diff;
-
-            DoMeleeAttackIfReady();
         }
     };
 
@@ -305,7 +311,16 @@ public:
     {
         boss_kiggler_the_crazedAI(Creature* creature) : ScriptedAI(creature)
         {
+            Initialize();
             instance = creature->GetInstanceScript();
+        }
+
+        void Initialize()
+        {
+            GreaterPolymorph_Timer = 5000;
+            LightningBolt_Timer = 10000;
+            ArcaneShock_Timer = 20000;
+            ArcaneExplosion_Timer = 30000;
         }
 
         uint32 GreaterPolymorph_Timer;
@@ -317,15 +332,12 @@ public:
 
         void Reset() override
         {
-            GreaterPolymorph_Timer = 5000;
-            LightningBolt_Timer = 10000;
-            ArcaneShock_Timer = 20000;
-            ArcaneExplosion_Timer = 30000;
+            Initialize();
 
             instance->SetBossState(DATA_MAULGAR, NOT_STARTED);
         }
 
-        void EnterCombat(Unit* /*who*/) override
+        void JustEngagedWith(Unit* /*who*/) override
         {
             DoZoneInCombat();
             instance->SetBossState(DATA_MAULGAR, IN_PROGRESS);
@@ -333,7 +345,7 @@ public:
 
         void JustDied(Unit* /*killer*/) override
         {
-            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetData64(DATA_MAULGAR)))
+            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetGuidData(DATA_MAULGAR)))
                 maulgar->AI()->DoAction(ACTION_ADD_DEATH);
 
             instance->SetBossState(DATA_MAULGAR, DONE);
@@ -347,7 +359,7 @@ public:
             //GreaterPolymorph_Timer
             if (GreaterPolymorph_Timer <= diff)
             {
-                if (Unit* target = SelectTarget(SELECT_TARGET_RANDOM, 0))
+                if (Unit* target = SelectTarget(SelectTargetMethod::Random, 0))
                     DoCast(target, SPELL_GREATER_POLYMORPH);
 
                 GreaterPolymorph_Timer = urand(15000, 20000);
@@ -373,8 +385,6 @@ public:
                 DoCastVictim(SPELL_ARCANE_EXPLOSION);
                 ArcaneExplosion_Timer = 30000;
             } else ArcaneExplosion_Timer -= diff;
-
-            DoMeleeAttackIfReady();
         }
     };
 
@@ -393,7 +403,15 @@ public:
     {
         boss_blindeye_the_seerAI(Creature* creature) : ScriptedAI(creature)
         {
+            Initialize();
             instance = creature->GetInstanceScript();
+        }
+
+        void Initialize()
+        {
+            GreaterPowerWordShield_Timer = 5000;
+            Heal_Timer = urand(25000, 40000);
+            PrayerofHealing_Timer = urand(45000, 55000);
         }
 
         uint32 GreaterPowerWordShield_Timer;
@@ -404,14 +422,12 @@ public:
 
         void Reset() override
         {
-            GreaterPowerWordShield_Timer = 5000;
-            Heal_Timer = urand(25000, 40000);
-            PrayerofHealing_Timer = urand(45000, 55000);
+            Initialize();
 
             instance->SetBossState(DATA_MAULGAR, NOT_STARTED);
         }
 
-        void EnterCombat(Unit* /*who*/) override
+        void JustEngagedWith(Unit* /*who*/) override
         {
             DoZoneInCombat();
             instance->SetBossState(DATA_MAULGAR, IN_PROGRESS);
@@ -419,7 +435,7 @@ public:
 
         void JustDied(Unit* /*killer*/) override
         {
-            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetData64(DATA_MAULGAR)))
+            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetGuidData(DATA_MAULGAR)))
                 maulgar->AI()->DoAction(ACTION_ADD_DEATH);
 
             instance->SetBossState(DATA_MAULGAR, DONE);
@@ -450,8 +466,6 @@ public:
                 DoCast(me, SPELL_PRAYER_OH);
                 PrayerofHealing_Timer = urand(35000, 50000);
             } else PrayerofHealing_Timer -= diff;
-
-            DoMeleeAttackIfReady();
         }
     };
 
@@ -470,7 +484,15 @@ public:
     {
         boss_krosh_firehandAI(Creature* creature) : ScriptedAI(creature)
         {
+            Initialize();
             instance = creature->GetInstanceScript();
+        }
+
+        void Initialize()
+        {
+            GreaterFireball_Timer = 1000;
+            SpellShield_Timer = 5000;
+            BlastWave_Timer = 20000;
         }
 
         uint32 GreaterFireball_Timer;
@@ -481,14 +503,12 @@ public:
 
         void Reset() override
         {
-            GreaterFireball_Timer = 1000;
-            SpellShield_Timer = 5000;
-            BlastWave_Timer = 20000;
+            Initialize();
 
             instance->SetBossState(DATA_MAULGAR, NOT_STARTED);
         }
 
-        void EnterCombat(Unit* /*who*/) override
+        void JustEngagedWith(Unit* /*who*/) override
         {
             DoZoneInCombat();
             instance->SetBossState(DATA_MAULGAR, IN_PROGRESS);
@@ -496,7 +516,7 @@ public:
 
         void JustDied(Unit* /*killer*/) override
         {
-            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetData64(DATA_MAULGAR)))
+            if (Creature* maulgar = ObjectAccessor::GetCreature(*me, instance->GetGuidData(DATA_MAULGAR)))
                 maulgar->AI()->DoAction(ACTION_ADD_DEATH);
 
             instance->SetBossState(DATA_MAULGAR, DONE);
@@ -525,17 +545,14 @@ public:
             //BlastWave_Timer
             if (BlastWave_Timer <= diff)
             {
-                Unit* target = NULL;
-                std::list<HostileReference*> t_list = me->getThreatManager().getThreatList();
                 std::vector<Unit*> target_list;
-                for (std::list<HostileReference*>::const_iterator itr = t_list.begin(); itr!= t_list.end(); ++itr)
+                for (auto* ref : me->GetThreatManager().GetUnsortedThreatList())
                 {
-                    target = ObjectAccessor::GetUnit(*me, (*itr)->getUnitGuid());
-                                                                //15 yard radius minimum
-                    if (target && target->IsWithinDist(me, 15, false))
+                    Unit* target = ref->GetVictim();
+                    if (target && target->IsWithinDist(me, 15, false)) // 15 yard radius minimum
                         target_list.push_back(target);
-                    target = NULL;
                 }
+                Unit* target = nullptr;
                 if (!target_list.empty())
                     target = *(target_list.begin() + rand32() % target_list.size());
 

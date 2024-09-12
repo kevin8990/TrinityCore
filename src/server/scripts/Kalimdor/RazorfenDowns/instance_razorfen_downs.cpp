@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,10 +16,11 @@
  */
 
 #include "ScriptMgr.h"
-#include "ObjectMgr.h"
+#include "GameObject.h"
 #include "InstanceScript.h"
+#include "Map.h"
+#include "MotionMaster.h"
 #include "razorfen_downs.h"
-#include "Player.h"
 #include "TemporarySummon.h"
 
 Position const PosSummonTutenkash[15] =
@@ -51,20 +52,16 @@ public:
 
     struct instance_razorfen_downs_InstanceMapScript : public InstanceScript
     {
-        instance_razorfen_downs_InstanceMapScript(Map* map) : InstanceScript(map)
+        instance_razorfen_downs_InstanceMapScript(InstanceMap* map) : InstanceScript(map)
         {
+            SetHeaders(DataHeader);
             SetBossNumber(EncounterCount);
-        }
-
-        void Initialize() override
-        {
-            goGongGUID      = 0;
-            gongWave        = 0;
-            fiendsKilled    = 0;
-            reaversKilled   = 0;
-            summonLowRange  = 0;
+            gongWave = 0;
+            fiendsKilled = 0;
+            reaversKilled = 0;
+            summonLowRange = 0;
             summonHighRange = 0;
-            summonCreature  = 0;
+            summonCreature = 0;
         }
 
         void OnGameObjectCreate(GameObject* gameObject) override
@@ -74,7 +71,7 @@ public:
                 case GO_GONG:
                     goGongGUID = gameObject->GetGUID();
                     if (GetBossState(DATA_TUTEN_KASH) == DONE)
-                        gameObject->SetFlag(GAMEOBJECT_FLAGS, GO_FLAG_NOT_SELECTABLE);
+                        gameObject->SetFlag(GO_FLAG_NOT_SELECTABLE);
                     break;
                 case GO_IDOL_OVEN_FIRE:
                 case GO_IDOL_CUP_FIRE:
@@ -117,7 +114,7 @@ public:
                     case IN_PROGRESS:
                     {
                         if (GameObject* go = instance->GetGameObject(goGongGUID))
-                            go->SetFlag(GAMEOBJECT_FLAGS, GO_FLAG_NOT_SELECTABLE);
+                            go->SetFlag(GO_FLAG_NOT_SELECTABLE);
 
                         switch (gongWave)
                         {
@@ -139,13 +136,9 @@ public:
                         }
 
                         if (GameObject* go = instance->GetGameObject(goGongGUID))
-                        {
                             for (uint8 i = summonLowRange; i < summonHighRange; ++i)
-                            {
-                                Creature* creature = go->SummonCreature(summonCreature, PosSummonTutenkash[i]);
+                                if (Creature* creature = go->SummonCreature(summonCreature, PosSummonTutenkash[i]))
                                     creature->GetMotionMaster()->MovePoint(0, 2533.479f + float(irand(-5, 5)), 870.020f + float(irand(-5, 5)), 47.678f);
-                            }
-                        }
 
                         ++gongWave;
                         break;
@@ -155,7 +148,7 @@ public:
                         {
                             fiendsKilled = 0;
                             if (GameObject* go = instance->GetGameObject(goGongGUID))
-                                go->RemoveFlag(GAMEOBJECT_FLAGS, GO_FLAG_NOT_SELECTABLE);
+                                go->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
                         }
                         break;
                     case NPC_TOMB_REAVER:
@@ -163,66 +156,21 @@ public:
                         {
                             reaversKilled = 0;
                             if (GameObject* go = instance->GetGameObject(goGongGUID))
-                                go->RemoveFlag(GAMEOBJECT_FLAGS, GO_FLAG_NOT_SELECTABLE);
+                                go->RemoveFlag(GO_FLAG_NOT_SELECTABLE);
                         }
                         break;
                 }
-
             }
-
         }
 
-        std::string GetSaveData() override
-        {
-            OUT_SAVE_INST_DATA;
-
-            std::ostringstream saveStream;
-            saveStream << "R D " << GetBossSaveData();
-
-            OUT_SAVE_INST_DATA_COMPLETE;
-            return saveStream.str();
-        }
-
-        void Load(const char* str) override
-        {
-            if (!str)
-            {
-                OUT_LOAD_INST_DATA_FAIL;
-                return;
-            }
-
-            OUT_LOAD_INST_DATA(str);
-
-            char dataHead1, dataHead2;
-
-            std::istringstream loadStream(str);
-            loadStream >> dataHead1 >> dataHead2;
-
-            if (dataHead1 == 'R' && dataHead2 == 'D')
-            {
-                for (uint32 i = 0; i < EncounterCount; ++i)
-                {
-                    uint32 tmpState;
-                    loadStream >> tmpState;
-                    if (tmpState == IN_PROGRESS || tmpState > SPECIAL)
-                        tmpState = NOT_STARTED;
-                    SetBossState(i, EncounterState(tmpState));
-                }
-            }
-            else
-                OUT_LOAD_INST_DATA_FAIL;
-
-            OUT_LOAD_INST_DATA_COMPLETE;
-        }
-
-        protected:
-            uint64 goGongGUID;
-            uint16 gongWave;
-            uint8  fiendsKilled;
-            uint8  reaversKilled;
-            uint8  summonLowRange;
-            uint8  summonHighRange;
-            uint32 summonCreature;
+    protected:
+        ObjectGuid goGongGUID;
+        uint16 gongWave;
+        uint8  fiendsKilled;
+        uint8  reaversKilled;
+        uint8  summonLowRange;
+        uint8  summonHighRange;
+        uint32 summonCreature;
     };
 
     InstanceScript* GetInstanceScript(InstanceMap* map) const override

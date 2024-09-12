@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2006-2009 ScriptDev2 <https://scriptdev2.svn.sourceforge.net/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -25,12 +24,32 @@ EndScriptData */
 
 #include "ScriptMgr.h"
 #include "InstanceScript.h"
+#include "Map.h"
+#include "Player.h"
+#include "ScriptedCreature.h"
 #include "shattered_halls.h"
+#include "SpellAuras.h"
+#include "TemporarySummon.h"
+
+DoorData const doorData[] =
+{
+    { GO_GRAND_WARLOCK_CHAMBER_DOOR_1, DATA_NETHEKURSE, EncounterDoorBehavior::OpenWhenDone },
+    { GO_GRAND_WARLOCK_CHAMBER_DOOR_2, DATA_NETHEKURSE, EncounterDoorBehavior::OpenWhenDone },
+    { 0,                               0,               EncounterDoorBehavior::OpenWhenNotInProgress }
+};
+
+DungeonEncounterData const encounters[] =
+{
+    { DATA_NETHEKURSE, {{ 1936 }} },
+    { DATA_PORUNG, {{ 1935 }} },
+    { DATA_OMROGG, {{ 1937 }} },
+    { DATA_KARGATH, {{ 1938 }} },
+};
 
 class instance_shattered_halls : public InstanceMapScript
 {
     public:
-        instance_shattered_halls() : InstanceMapScript("instance_shattered_halls", 540) { }
+        instance_shattered_halls() : InstanceMapScript(SHScriptName, 540) { }
 
         InstanceScript* GetInstanceScript(InstanceMap* map) const override
         {
@@ -39,27 +58,42 @@ class instance_shattered_halls : public InstanceMapScript
 
         struct instance_shattered_halls_InstanceMapScript : public InstanceScript
         {
-            instance_shattered_halls_InstanceMapScript(Map* map) : InstanceScript(map) { }
-
-            void Initialize() override
+            instance_shattered_halls_InstanceMapScript(InstanceMap* map) : InstanceScript(map)
             {
+                SetHeaders(DataHeader);
                 SetBossNumber(EncounterCount);
-                nethekurseGUID      = 0;
-                nethekurseDoor1GUID = 0;
-                nethekurseDoor2GUID = 0;
+                LoadDoorData(doorData);
+                LoadDungeonEncounterData(encounters);
+                executionTimer = 0;
+                executed = 0;
             }
 
-            void OnGameObjectCreate(GameObject* go) override
+            void OnPlayerEnter(Player* player) override
             {
-                switch (go->GetEntry())
+                Aura* ex = nullptr;
+
+                player->CastSpell(player, SPELL_REMOVE_KARGATH_EXECUTIONER, true);
+
+                if (!executionTimer || executionerGUID.IsEmpty())
+                    return;
+
+                switch (executed)
                 {
-                    case GO_GRAND_WARLOCK_CHAMBER_DOOR_1:
-                        nethekurseDoor1GUID = go->GetGUID();
+                    case 0:
+                        ex = player->AddAura(SPELL_KARGATH_EXECUTIONER_1, player);
                         break;
-                    case GO_GRAND_WARLOCK_CHAMBER_DOOR_2:
-                        nethekurseDoor2GUID = go->GetGUID();
+                    case 1:
+                        ex = player->AddAura(SPELL_KARGATH_EXECUTIONER_2, player);
+                        break;
+                    case 2:
+                        ex = player->AddAura(SPELL_KARGATH_EXECUTIONER_3, player);
+                        break;
+                    default:
                         break;
                 }
+
+                if (ex)
+                    ex->SetDuration(executionTimer);
             }
 
             void OnCreatureCreate(Creature* creature) override
@@ -69,7 +103,37 @@ class instance_shattered_halls : public InstanceMapScript
                     case NPC_GRAND_WARLOCK_NETHEKURSE:
                         nethekurseGUID = creature->GetGUID();
                         break;
+                    case NPC_KARGATH_BLADEFIST:
+                        kargathGUID = creature->GetGUID();
+                        break;
+                    case NPC_RANDY_WHIZZLESPROCKET:
+                        if (instance->GetTeamInInstance() == HORDE)
+                            creature->UpdateEntry(NPC_DRISELLA);
+                        break;
+                    case NPC_SHATTERED_EXECUTIONER:
+                        executionTimer = 55 * MINUTE * IN_MILLISECONDS;
+                        DoCastSpellOnPlayers(SPELL_KARGATH_EXECUTIONER_1);
+                        executionerGUID = creature->GetGUID();
+                        break;
+                    case NPC_CAPTAIN_ALINA:
+                    case NPC_CAPTAIN_BONESHATTER:
+                        victimsGUID[0] = creature->GetGUID();
+                        break;
+                    case NPC_ALLIANCE_VICTIM_1:
+                    case NPC_HORDE_VICTIM_1:
+                        victimsGUID[1] = creature->GetGUID();
+                        break;
+                    case NPC_ALLIANCE_VICTIM_2:
+                    case NPC_HORDE_VICTIM_2:
+                        victimsGUID[2] = creature->GetGUID();
+                        break;
                 }
+            }
+
+            void OnUnitDeath(Unit* unit) override
+            {
+                if (unit->GetEntry() == NPC_BLOOD_GUARD_PORUNG)
+                    SetBossState(DATA_PORUNG, DONE);
             }
 
             bool SetBossState(uint32 type, EncounterState state) override
@@ -79,17 +143,16 @@ class instance_shattered_halls : public InstanceMapScript
 
                 switch (type)
                 {
-                    case DATA_NETHEKURSE:
-                        if (state == IN_PROGRESS)
+                    case DATA_SHATTERED_EXECUTIONER:
+                        if (state == DONE)
                         {
-                            HandleGameObject(nethekurseDoor1GUID, false);
-                            HandleGameObject(nethekurseDoor2GUID, false);
+                            DoCastSpellOnPlayers(SPELL_REMOVE_KARGATH_EXECUTIONER);
+                            executionTimer = 0;
                         }
-                        else
-                        {
-                            HandleGameObject(nethekurseDoor1GUID, true);
-                            HandleGameObject(nethekurseDoor2GUID, true);
-                        }
+                        break;
+                    case DATA_KARGATH:
+                        if (Creature* executioner = instance->GetCreature(executionerGUID))
+                            executioner->AI()->Reset(); // trigger removal of IMMUNE_TO_PC flag
                         break;
                     case DATA_OMROGG:
                         break;
@@ -97,70 +160,83 @@ class instance_shattered_halls : public InstanceMapScript
                 return true;
             }
 
-            uint64 GetData64(uint32 data) const override
+            ObjectGuid GetGuidData(uint32 data) const override
             {
                 switch (data)
                 {
                     case NPC_GRAND_WARLOCK_NETHEKURSE:
                         return nethekurseGUID;
-                        break;
-                    case GO_GRAND_WARLOCK_CHAMBER_DOOR_1:
-                        return nethekurseDoor1GUID;
-                        break;
-                    case GO_GRAND_WARLOCK_CHAMBER_DOOR_2:
-                        return nethekurseDoor2GUID;
-                        break;
+                    case NPC_KARGATH_BLADEFIST:
+                        return kargathGUID;
+                    case NPC_SHATTERED_EXECUTIONER:
+                        return executionerGUID;
+                    case DATA_FIRST_PRISONER:
+                    case DATA_SECOND_PRISONER:
+                    case DATA_THIRD_PRISONER:
+                        return victimsGUID[data - DATA_FIRST_PRISONER];
+                    default:
+                        return ObjectGuid::Empty;
                 }
-                return 0;
             }
 
-            std::string GetSaveData() override
+            void AfterDataLoad() override
             {
-                OUT_SAVE_INST_DATA;
-
-                std::ostringstream saveStream;
-                saveStream << "S H " << GetBossSaveData();
-
-                OUT_SAVE_INST_DATA_COMPLETE;
-                return saveStream.str();
+                // timed events are not resumable after reset/crash
+                executed = VictimCount;
+                executionTimer = 0;
             }
 
-            void Load(const char* strIn) override
+            uint32 GetData(uint32 type) const override
             {
-                if (!strIn)
+                switch (type)
                 {
-                    OUT_LOAD_INST_DATA_FAIL;
+                    case DATA_PRISONERS_EXECUTED:
+                        return executed;
+                    case DATA_TEAM_IN_INSTANCE:
+                        return instance->GetTeamInInstance();
+                    default:
+                        return 0;
+                }
+            }
+
+            void Update(uint32 diff) override
+            {
+                if (!executionTimer)
                     return;
-                }
 
-                OUT_LOAD_INST_DATA(strIn);
-
-                char dataHead1, dataHead2;
-
-                std::istringstream loadStream(strIn);
-                loadStream >> dataHead1 >> dataHead2;
-
-                if (dataHead1 == 'S' && dataHead2 == 'H')
+                if (executionTimer <= diff)
                 {
-                    for (uint8 i = 0; i < EncounterCount; ++i)
+                    DoCastSpellOnPlayers(SPELL_REMOVE_KARGATH_EXECUTIONER);
+                    switch (++executed)
                     {
-                        uint32 tmpState;
-                        loadStream >> tmpState;
-                        if (tmpState == IN_PROGRESS || tmpState > SPECIAL)
-                            tmpState = NOT_STARTED;
-                        SetBossState(i, EncounterState(tmpState));
+                        case 1:
+                            DoCastSpellOnPlayers(SPELL_KARGATH_EXECUTIONER_2);
+                            executionTimer = 10 * MINUTE * IN_MILLISECONDS;
+                            break;
+                        case 2:
+                            DoCastSpellOnPlayers(SPELL_KARGATH_EXECUTIONER_3);
+                            executionTimer = 15 * MINUTE * IN_MILLISECONDS;
+                            break;
+                        default:
+                            executionTimer = 0;
+                            break;
                     }
+
+                    if (Creature* executioner = instance->GetCreature(executionerGUID))
+                        executioner->AI()->SetData(DATA_PRISONERS_EXECUTED, executed);
                 }
                 else
-                    OUT_LOAD_INST_DATA_FAIL;
-
-                OUT_LOAD_INST_DATA_COMPLETE;
+                    executionTimer -= diff;
             }
 
-            protected:
-                uint64 nethekurseGUID;
-                uint64 nethekurseDoor1GUID;
-                uint64 nethekurseDoor2GUID;
+        private:
+            ObjectGuid nethekurseGUID;
+            ObjectGuid kargathGUID;
+            ObjectGuid executionerGUID;
+            ObjectGuid victimsGUID[3];
+
+            uint8 executed;
+            uint32 executionTimer;
         };
 };
 

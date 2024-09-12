@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,15 +16,45 @@
  */
 
 #include "ScriptMgr.h"
-#include "InstanceScript.h"
+#include "Creature.h"
+#include "CreatureAI.h"
+#include "GameObject.h"
 #include "halls_of_lightning.h"
+#include "InstanceScript.h"
+#include "Map.h"
 
 DoorData const doorData[] =
 {
-    { GO_VOLKHAN_DOOR, DATA_VOLKHAN, DOOR_TYPE_PASSAGE, BOUNDARY_NONE },
-    { GO_IONAR_DOOR,   DATA_IONAR,   DOOR_TYPE_PASSAGE, BOUNDARY_NONE },
-    { GO_LOKEN_DOOR,   DATA_LOKEN,   DOOR_TYPE_PASSAGE, BOUNDARY_NONE },
-    { 0,               0,            DOOR_TYPE_ROOM,    BOUNDARY_NONE } // END
+    { GO_VOLKHAN_DOOR, DATA_VOLKHAN, EncounterDoorBehavior::OpenWhenDone },
+    { GO_IONAR_DOOR,   DATA_IONAR,   EncounterDoorBehavior::OpenWhenDone },
+    { GO_LOKEN_DOOR,   DATA_LOKEN,   EncounterDoorBehavior::OpenWhenDone },
+    { 0,               0,            EncounterDoorBehavior::OpenWhenNotInProgress } // END
+};
+
+ObjectData const creatureData[] =
+{
+    { NPC_GENERAL_BJARNGRIM,    DATA_GENERAL_BJARNGRIM  },
+    { NPC_VOLKHAN,              DATA_VOLKHAN            },
+    { NPC_IONAR,                DATA_IONAR              },
+    { NPC_LOKEN,                DATA_LOKEN              },
+    { NPC_INVISIBLE_STALKER,    DATA_INVISIBLE_STALKER  },
+    { NPC_VOLKHANS_ANVIL,       DATA_VOLKHANS_ANVIL     },
+    { 0,                        0                       } // END
+};
+
+ObjectData const gameObjectData[] =
+{
+    { GO_VOLKHAN_TEMPER_VISUAL, DATA_VOLKHAN_TEMPER_VISUAL },
+    { GO_LOKEN_THRONE,          DATA_LOKEN_GLOBE           },
+    { 0,                        0                          } // END
+};
+
+DungeonEncounterData const encounters[] =
+{
+    { DATA_GENERAL_BJARNGRIM, {{ 1987 }} },
+    { DATA_VOLKHAN, {{ 1985 }} },
+    { DATA_IONAR, {{ 1984 }} },
+    { DATA_LOKEN, {{ 1986 }} }
 };
 
 class instance_halls_of_lightning : public InstanceMapScript
@@ -34,65 +64,30 @@ class instance_halls_of_lightning : public InstanceMapScript
 
         struct instance_halls_of_lightning_InstanceMapScript : public InstanceScript
         {
-            instance_halls_of_lightning_InstanceMapScript(Map* map) : InstanceScript(map)
+            instance_halls_of_lightning_InstanceMapScript(InstanceMap* map) : InstanceScript(map)
             {
+                SetHeaders(DataHeader);
                 SetBossNumber(EncounterCount);
+                LoadObjectData(creatureData, gameObjectData);
                 LoadDoorData(doorData);
-
-                GeneralBjarngrimGUID = 0;
-                VolkhanGUID          = 0;
-                IonarGUID            = 0;
-                LokenGUID            = 0;
-
-                LokenGlobeGUID       = 0;
+                LoadDungeonEncounterData(encounters);
             }
 
             void OnCreatureCreate(Creature* creature) override
             {
+                InstanceScript::OnCreatureCreate(creature);
+
                 switch (creature->GetEntry())
                 {
-                    case NPC_BJARNGRIM:
-                        GeneralBjarngrimGUID = creature->GetGUID();
-                        break;
-                    case NPC_VOLKHAN:
-                        VolkhanGUID = creature->GetGUID();
-                        break;
-                    case NPC_IONAR:
-                        IonarGUID = creature->GetGUID();
-                        break;
-                    case NPC_LOKEN:
-                        LokenGUID = creature->GetGUID();
-                        break;
-                    default:
-                        break;
-                }
-            }
-
-            void OnGameObjectCreate(GameObject* go) override
-            {
-                switch (go->GetEntry())
-                {
-                    case GO_VOLKHAN_DOOR:
-                    case GO_IONAR_DOOR:
-                    case GO_LOKEN_DOOR:
-                        AddDoor(go, true);
-                        break;
-                    case GO_LOKEN_THRONE:
-                        LokenGlobeGUID = go->GetGUID();
-                        break;
-                    default:
-                        break;
-                }
-            }
-
-            void OnGameObjectRemove(GameObject* go) override
-            {
-                switch (go->GetEntry())
-                {
-                    case GO_VOLKHAN_DOOR:
-                    case GO_IONAR_DOOR:
-                    case GO_LOKEN_DOOR:
-                        AddDoor(go, false);
+                    case NPC_MOLTEN_GOLEM:
+                        if (GetBossState(DATA_VOLKHAN) == IN_PROGRESS)
+                        {
+                            if (Creature* volkhan = GetCreature(DATA_VOLKHAN))
+                                if (CreatureAI* ai = volkhan->AI())
+                                    ai->JustSummoned(creature);
+                        }
+                        else // These golems are summoned via trigger missile so we have to clean them up if they spawned during a wipe/completion
+                            creature->DespawnOrUnsummon();
                         break;
                     default:
                         break;
@@ -108,7 +103,7 @@ class instance_halls_of_lightning : public InstanceMapScript
                 {
                     case DATA_LOKEN:
                         if (state == DONE)
-                            if (GameObject* globe = instance->GetGameObject(LokenGlobeGUID))
+                            if (GameObject* globe = GetGameObject(DATA_LOKEN_GLOBE))
                                 globe->SendCustomAnim(0);
                         break;
                     default:
@@ -117,75 +112,6 @@ class instance_halls_of_lightning : public InstanceMapScript
 
                 return true;
             }
-
-            uint64 GetData64(uint32 type) const override
-            {
-                switch (type)
-                {
-                    case DATA_BJARNGRIM:
-                        return GeneralBjarngrimGUID;
-                    case DATA_VOLKHAN:
-                        return VolkhanGUID;
-                    case DATA_IONAR:
-                        return IonarGUID;
-                    case DATA_LOKEN:
-                        return LokenGUID;
-                    default:
-                        break;
-                }
-                return 0;
-            }
-
-            std::string GetSaveData() override
-            {
-                OUT_SAVE_INST_DATA;
-
-                std::ostringstream saveStream;
-                saveStream << "H L " << GetBossSaveData();
-
-                OUT_SAVE_INST_DATA_COMPLETE;
-                return saveStream.str();
-            }
-
-            void Load(const char* str) override
-            {
-                if (!str)
-                {
-                    OUT_LOAD_INST_DATA_FAIL;
-                    return;
-                }
-
-                OUT_LOAD_INST_DATA(str);
-
-                char dataHead1, dataHead2;
-
-                std::istringstream loadStream(str);
-                loadStream >> dataHead1 >> dataHead2;
-
-                if (dataHead1 == 'H' && dataHead2 == 'L')
-                {
-                    for (uint32 i = 0; i < EncounterCount; ++i)
-                    {
-                        uint32 tmpState;
-                        loadStream >> tmpState;
-                        if (tmpState == IN_PROGRESS || tmpState > SPECIAL)
-                            tmpState = NOT_STARTED;
-                        SetBossState(i, EncounterState(tmpState));
-                    }
-                }
-                else
-                    OUT_LOAD_INST_DATA_FAIL;
-
-                OUT_LOAD_INST_DATA_COMPLETE;
-            }
-
-        protected:
-            uint64 GeneralBjarngrimGUID;
-            uint64 VolkhanGUID;
-            uint64 IonarGUID;
-            uint64 LokenGUID;
-
-            uint64 LokenGlobeGUID;
         };
 
         InstanceScript* GetInstanceScript(InstanceMap* map) const override

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,9 +16,12 @@
  */
 
 #include "ScriptMgr.h"
+#include "Containers.h"
+#include "MotionMaster.h"
+#include "ObjectAccessor.h"
+#include "Player.h"
 #include "ScriptedCreature.h"
 #include "SpellAuras.h"
-#include "Player.h"
 
 enum Orphans
 {
@@ -27,7 +30,7 @@ enum Orphans
     ORPHAN_BLOOD_ELF                        = 22817,
     ORPHAN_DRAENEI                          = 22818,
     ORPHAN_HUMAN                            = 14305,
-    ORPHAN_ORCISH                           = 14444,
+    ORPHAN_ORCISH                           = 14444
 };
 
 enum Texts
@@ -68,7 +71,7 @@ enum Texts
     TEXT_ELDER_KEKEK_1                      = 1,
 
     TEXT_ALEXSTRASZA_2                      = 2,
-    TEXT_KRASUS_8                           = 8,
+    TEXT_KRASUS_8                           = 8
 };
 
 enum Quests
@@ -99,7 +102,7 @@ enum Quests
     QUEST_NOW_WHEN_I_GROW_UP                = 11975,
     QUEST_HOME_OF_THE_BEAR_MEN              = 13930,
     QUEST_THE_DRAGON_QUEEN_ORACLE           = 13954,
-    QUEST_THE_DRAGON_QUEEN_WOLVAR           = 13955,
+    QUEST_THE_DRAGON_QUEEN_WOLVAR           = 13955
 };
 
 enum Areatriggers
@@ -120,7 +123,7 @@ enum Areatriggers
     NPC_SPOREGGAR_CW_TRIGGER                = 22829,
     NPC_THRONE_OF_ELEMENTS_CW_TRIGGER       = 22839,
     NPC_SILVERMOON_01_CW_TRIGGER            = 22866,
-    NPC_KRASUS                              = 27990,
+    NPC_KRASUS                              = 27990
 };
 
 enum Misc
@@ -128,16 +131,16 @@ enum Misc
     SPELL_SNOWBALL                          = 21343,
     SPELL_ORPHAN_OUT                        = 58818,
 
-    DISPLAY_INVISIBLE                       = 11686,
+    DISPLAY_INVISIBLE                       = 11686
 };
 
-uint64 getOrphanGUID(Player* player, uint32 orphan)
+ObjectGuid getOrphanGUID(Player* player, uint32 orphan)
 {
     if (Aura* orphanOut = player->GetAura(SPELL_ORPHAN_OUT))
         if (orphanOut->GetCaster() && orphanOut->GetCaster()->GetEntry() == orphan)
             return orphanOut->GetCaster()->GetGUID();
 
-    return 0;
+    return ObjectGuid::Empty;
 }
 
 /*######
@@ -150,18 +153,25 @@ class npc_winterfin_playmate : public CreatureScript
 
         struct npc_winterfin_playmateAI : public ScriptedAI
         {
-            npc_winterfin_playmateAI(Creature* creature) : ScriptedAI(creature) { }
+            npc_winterfin_playmateAI(Creature* creature) : ScriptedAI(creature)
+            {
+                Initialize();
+            }
 
-            void Reset()
+            void Initialize()
             {
                 timer = 0;
                 phase = 0;
-                playerGUID = 0;
-                orphanGUID = 0;
+                playerGUID.Clear();
+                orphanGUID.Clear();
+            }
+
+            void Reset() override
+            {
+                Initialize();
             }
 
             void MoveInLineOfSight(Unit* who) override
-
             {
                 if (!phase && who && who->GetDistance2d(me) < 10.0f)
                     if (Player* player = who->ToPlayer())
@@ -169,12 +179,12 @@ class npc_winterfin_playmate : public CreatureScript
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_ORACLE);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 1;
                         }
             }
 
-            void UpdateAI(uint32 diff)
+            void UpdateAI(uint32 diff) override
             {
                 if (!phase)
                     return;
@@ -228,12 +238,12 @@ class npc_winterfin_playmate : public CreatureScript
         private:
             uint32 timer;
             int8 phase;
-            uint64 playerGUID;
-            uint64 orphanGUID;
+            ObjectGuid playerGUID;
+            ObjectGuid orphanGUID;
 
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_winterfin_playmateAI(creature);
         }
@@ -249,14 +259,22 @@ class npc_snowfall_glade_playmate : public CreatureScript
 
         struct npc_snowfall_glade_playmateAI : public ScriptedAI
         {
-            npc_snowfall_glade_playmateAI(Creature* creature) : ScriptedAI(creature) { }
+            npc_snowfall_glade_playmateAI(Creature* creature) : ScriptedAI(creature)
+            {
+                Initialize();
+            }
 
-            void Reset()
+            void Initialize()
             {
                 timer = 0;
                 phase = 0;
-                playerGUID = 0;
-                orphanGUID = 0;
+                playerGUID.Clear();
+                orphanGUID.Clear();
+            }
+
+            void Reset() override
+            {
+                Initialize();
             }
 
             void MoveInLineOfSight(Unit* who) override
@@ -268,12 +286,12 @@ class npc_snowfall_glade_playmate : public CreatureScript
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_WOLVAR);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 1;
                         }
             }
 
-            void UpdateAI(uint32 diff)
+            void UpdateAI(uint32 diff) override
             {
                 if (!phase)
                     return;
@@ -327,11 +345,11 @@ class npc_snowfall_glade_playmate : public CreatureScript
         private:
             uint32 timer;
             int8 phase;
-            uint64 playerGUID;
-            uint64 orphanGUID;
+            ObjectGuid playerGUID;
+            ObjectGuid orphanGUID;
         };
 
-        CreatureAI* GetAI(Creature* pCreature) const
+        CreatureAI* GetAI(Creature* pCreature) const override
         {
             return new npc_snowfall_glade_playmateAI(pCreature);
         }
@@ -349,19 +367,24 @@ class npc_the_biggest_tree : public CreatureScript
         {
             npc_the_biggest_treeAI(Creature* creature) : ScriptedAI(creature)
             {
+                Initialize();
                 me->SetDisplayId(DISPLAY_INVISIBLE);
             }
 
-            void Reset()
+            void Initialize()
             {
                 timer = 1000;
                 phase = 0;
-                playerGUID = 0;
-                orphanGUID = 0;
+                playerGUID.Clear();
+                orphanGUID.Clear();
+            }
+
+            void Reset() override
+            {
+                Initialize();
             }
 
             void MoveInLineOfSight(Unit* who) override
-
             {
                 if (!phase && who && who->GetDistance2d(me) < 10.0f)
                     if (Player* player = who->ToPlayer())
@@ -369,12 +392,12 @@ class npc_the_biggest_tree : public CreatureScript
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_ORACLE);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 1;
                         }
             }
 
-            void UpdateAI(uint32 diff)
+            void UpdateAI(uint32 diff) override
             {
                 if (!phase)
                     return;
@@ -416,12 +439,12 @@ class npc_the_biggest_tree : public CreatureScript
         private:
             uint32 timer;
             uint8 phase;
-            uint64 playerGUID;
-            uint64 orphanGUID;
+            ObjectGuid playerGUID;
+            ObjectGuid orphanGUID;
 
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_the_biggest_treeAI(creature);
         }
@@ -437,14 +460,22 @@ class npc_high_oracle_soo_roo : public CreatureScript
 
         struct npc_high_oracle_soo_rooAI : public ScriptedAI
         {
-            npc_high_oracle_soo_rooAI(Creature* creature) : ScriptedAI(creature) { }
+            npc_high_oracle_soo_rooAI(Creature* creature) : ScriptedAI(creature)
+            {
+                Initialize();
+            }
 
-            void Reset()
+            void Initialize()
             {
                 timer = 0;
                 phase = 0;
-                playerGUID = 0;
-                orphanGUID = 0;
+                playerGUID.Clear();
+                orphanGUID.Clear();
+            }
+
+            void Reset() override
+            {
+                Initialize();
             }
 
             void MoveInLineOfSight(Unit* who) override
@@ -456,12 +487,12 @@ class npc_high_oracle_soo_roo : public CreatureScript
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_ORACLE);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 1;
                         }
             }
 
-            void UpdateAI(uint32 diff)
+            void UpdateAI(uint32 diff) override
             {
                 if (!phase)
                     return;
@@ -505,12 +536,12 @@ class npc_high_oracle_soo_roo : public CreatureScript
         private:
             uint32 timer;
             int8 phase;
-            uint64 playerGUID;
-            uint64 orphanGUID;
+            ObjectGuid playerGUID;
+            ObjectGuid orphanGUID;
 
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_high_oracle_soo_rooAI(creature);
         }
@@ -526,18 +557,25 @@ class npc_elder_kekek : public CreatureScript
 
         struct npc_elder_kekekAI : public ScriptedAI
         {
-            npc_elder_kekekAI(Creature* creature) : ScriptedAI(creature) { }
+            npc_elder_kekekAI(Creature* creature) : ScriptedAI(creature)
+            {
+                Initialize();
+            }
 
-            void Reset()
+            void Initialize()
             {
                 timer = 0;
                 phase = 0;
-                playerGUID = 0;
-                orphanGUID = 0;
+                playerGUID.Clear();
+                orphanGUID.Clear();
+            }
+
+            void Reset() override
+            {
+                Initialize();
             }
 
             void MoveInLineOfSight(Unit* who) override
-
             {
                 if (!phase && who && who->GetDistance2d(me) < 10.0f)
                     if (Player* player = who->ToPlayer())
@@ -545,12 +583,12 @@ class npc_elder_kekek : public CreatureScript
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_WOLVAR);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 1;
                         }
             }
 
-            void UpdateAI(uint32 diff)
+            void UpdateAI(uint32 diff) override
             {
                 if (!phase)
                     return;
@@ -593,15 +631,21 @@ class npc_elder_kekek : public CreatureScript
         private:
             uint32 timer;
             int8 phase;
-            uint64 playerGUID;
-            uint64 orphanGUID;
+            ObjectGuid playerGUID;
+            ObjectGuid orphanGUID;
 
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_elder_kekekAI(creature);
         }
+};
+
+enum TheEtymidian
+{
+    SAY_ACTIVATION            = 0,
+    QUEST_THE_ACTIVATION_RUNE = 12547
 };
 
 /*######
@@ -615,31 +659,52 @@ class npc_the_etymidian : public CreatureScript
 
         struct npc_the_etymidianAI : public ScriptedAI
         {
-            npc_the_etymidianAI(Creature* creature) : ScriptedAI(creature) { }
+            npc_the_etymidianAI(Creature* creature) : ScriptedAI(creature)
+            {
+                Initialize();
+            }
 
-            void Reset()
+            void Initialize()
             {
                 timer = 0;
                 phase = 0;
-                playerGUID = 0;
-                orphanGUID = 0;
+                playerGUID.Clear();
+                orphanGUID.Clear();
             }
 
-            void MoveInLineOfSight(Unit* who) override
+            void Reset() override
+            {
+                Initialize();
+            }
 
+            void OnQuestReward(Player* /*player*/, Quest const* quest, LootItemType /*type*/, uint32 /*opt*/) override
+            {
+                if (quest->GetQuestId() != QUEST_THE_ACTIVATION_RUNE)
+                    return;
+
+                Talk(SAY_ACTIVATION);
+            }
+
+            // doesn't trigger if creature is stunned. Restore aura 25900 when it will be possible or
+            // find another way to start event(from orphan script)
+            void MoveInLineOfSight(Unit* who) override
             {
                 if (!phase && who && who->GetDistance2d(me) < 10.0f)
+                {
                     if (Player* player = who->ToPlayer())
+                    {
                         if (player->GetQuestStatus(QUEST_MEETING_A_GREAT_ONE) == QUEST_STATUS_INCOMPLETE)
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_ORACLE);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 1;
                         }
+                    }
+                }
             }
 
-            void UpdateAI(uint32 diff)
+            void UpdateAI(uint32 diff) override
             {
                 if (!phase)
                     return;
@@ -690,12 +755,11 @@ class npc_the_etymidian : public CreatureScript
         private:
             uint32 timer;
             int8 phase;
-            uint64 playerGUID;
-            uint64 orphanGUID;
-
+            ObjectGuid playerGUID;
+            ObjectGuid orphanGUID;
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_the_etymidianAI(creature);
         }
@@ -711,14 +775,22 @@ class npc_alexstraza_the_lifebinder : public CreatureScript
 
         struct npc_alexstraza_the_lifebinderAI : public ScriptedAI
         {
-            npc_alexstraza_the_lifebinderAI(Creature* creature) : ScriptedAI(creature) { }
+            npc_alexstraza_the_lifebinderAI(Creature* creature) : ScriptedAI(creature)
+            {
+                Initialize();
+            }
 
-            void Reset()
+            void Initialize()
             {
                 timer = 0;
                 phase = 0;
-                playerGUID = 0;
-                orphanGUID = 0;
+                playerGUID.Clear();
+                orphanGUID.Clear();
+            }
+
+            void Reset() override
+            {
+                Initialize();
             }
 
             void SetData(uint32 type, uint32 data) override
@@ -739,7 +811,6 @@ class npc_alexstraza_the_lifebinder : public CreatureScript
             }
 
             void MoveInLineOfSight(Unit* who) override
-
             {
                 if (!phase && who && who->GetDistance2d(me) < 10.0f)
                     if (Player* player = who->ToPlayer())
@@ -748,20 +819,20 @@ class npc_alexstraza_the_lifebinder : public CreatureScript
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_ORACLE);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 1;
                         }
                         else if (player->GetQuestStatus(QUEST_THE_DRAGON_QUEEN_WOLVAR) == QUEST_STATUS_INCOMPLETE)
                         {
                             playerGUID = player->GetGUID();
                             orphanGUID = getOrphanGUID(player, ORPHAN_WOLVAR);
-                            if (orphanGUID)
+                            if (!orphanGUID.IsEmpty())
                                 phase = 7;
                         }
                     }
             }
 
-            void UpdateAI(uint32 diff)
+            void UpdateAI(uint32 diff) override
             {
                 if (!phase)
                     return;
@@ -851,12 +922,12 @@ class npc_alexstraza_the_lifebinder : public CreatureScript
             private:
                 int8 phase;
                 uint32 timer;
-                uint64 playerGUID;
-                uint64 orphanGUID;
+                ObjectGuid playerGUID;
+                ObjectGuid orphanGUID;
 
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_alexstraza_the_lifebinderAI(creature);
         }
@@ -871,7 +942,7 @@ class at_bring_your_orphan_to : public AreaTriggerScript
     public:
         at_bring_your_orphan_to() : AreaTriggerScript("at_bring_your_orphan_to") { }
 
-        bool OnTrigger(Player* player, AreaTriggerEntry const* trigger)
+        bool OnTrigger(Player* player, AreaTriggerEntry const* trigger) override
         {
             if (player->isDead() || !player->HasAura(SPELL_ORPHAN_OUT))
                 return false;
@@ -879,7 +950,7 @@ class at_bring_your_orphan_to : public AreaTriggerScript
             uint32 questId = 0;
             uint32 orphanId = 0;
 
-            switch (trigger->id)
+            switch (trigger->ID)
             {
                 case AT_DOWN_AT_THE_DOCKS:
                     questId = QUEST_DOWN_AT_THE_DOCKS;
@@ -911,7 +982,7 @@ class at_bring_your_orphan_to : public AreaTriggerScript
                     break;
             }
 
-            if (questId && orphanId && getOrphanGUID(player, orphanId) && player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE)
+            if (questId && orphanId && !getOrphanGUID(player, orphanId).IsEmpty() && player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE)
                 player->AreaExploredOrEventHappens(questId);
 
             return true;
@@ -934,7 +1005,6 @@ class npc_cw_area_trigger : public CreatureScript
             }
 
             void MoveInLineOfSight(Unit* who) override
-
             {
                 if (who && me->GetDistance2d(who) < 20.0f)
                     if (Player* player = who->ToPlayer())
@@ -973,43 +1043,32 @@ class npc_cw_area_trigger : public CreatureScript
                                     orphanId = ORPHAN_BLOOD_ELF;
                                     break;
                                 case NPC_SILVERMOON_01_CW_TRIGGER:
-                                    if (player->GetQuestStatus(QUEST_NOW_WHEN_I_GROW_UP) == QUEST_STATUS_INCOMPLETE && getOrphanGUID(player, ORPHAN_BLOOD_ELF))
+                                    if (player->GetQuestStatus(QUEST_NOW_WHEN_I_GROW_UP) == QUEST_STATUS_INCOMPLETE && !getOrphanGUID(player, ORPHAN_BLOOD_ELF).IsEmpty())
                                     {
                                         player->AreaExploredOrEventHappens(QUEST_NOW_WHEN_I_GROW_UP);
                                         if (player->GetQuestStatus(QUEST_NOW_WHEN_I_GROW_UP) == QUEST_STATUS_COMPLETE)
                                             if (Creature* samuro = me->FindNearestCreature(25151, 20.0f))
                                             {
-                                                uint32 emote = 0;
-                                                switch (urand(1, 5))
-                                                {
-                                                    case 1:
-                                                        emote = EMOTE_ONESHOT_WAVE;
-                                                        break;
-                                                    case 2:
-                                                        emote = EMOTE_ONESHOT_ROAR;
-                                                        break;
-                                                    case 3:
-                                                        emote = EMOTE_ONESHOT_FLEX;
-                                                        break;
-                                                    case 4:
-                                                        emote = EMOTE_ONESHOT_SALUTE;
-                                                        break;
-                                                    case 5:
-                                                        emote = EMOTE_ONESHOT_DANCE;
-                                                        break;
-                                                }
-                                                samuro->HandleEmoteCommand(emote);
+                                                Emote const emotes[] =
+                                                    {
+                                                        EMOTE_ONESHOT_WAVE,
+                                                        EMOTE_ONESHOT_ROAR,
+                                                        EMOTE_ONESHOT_FLEX,
+                                                        EMOTE_ONESHOT_SALUTE,
+                                                        EMOTE_ONESHOT_DANCE
+                                                    };
+                                                samuro->HandleEmoteCommand(Trinity::Containers::SelectRandomContainerElement(emotes));
                                             }
                                     }
                                     break;
                             }
-                            if (questId && orphanId && getOrphanGUID(player, orphanId) && player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE)
+                            if (questId && orphanId && !getOrphanGUID(player, orphanId).IsEmpty() && player->GetQuestStatus(questId) == QUEST_STATUS_INCOMPLETE)
                                 player->AreaExploredOrEventHappens(questId);
                         }
             }
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_cw_area_triggerAI(creature);
         }
@@ -1031,7 +1090,6 @@ class npc_grizzlemaw_cw_trigger : public CreatureScript
             }
 
             void MoveInLineOfSight(Unit* who) override
-
             {
                 if (who && who->GetDistance2d(me) < 10.0f)
                     if (Player* player = who->ToPlayer())
@@ -1044,7 +1102,7 @@ class npc_grizzlemaw_cw_trigger : public CreatureScript
             }
         };
 
-        CreatureAI* GetAI(Creature* creature) const
+        CreatureAI* GetAI(Creature* creature) const override
         {
             return new npc_grizzlemaw_cw_triggerAI(creature);
         }

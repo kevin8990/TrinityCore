@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -18,87 +18,19 @@
 #ifndef TRINITY_ARENA_SCORE_H
 #define TRINITY_ARENA_SCORE_H
 
-#include "BattlegroundScore.h"
-#include "SharedDefines.h"
+#include "Define.h"
 
-struct ArenaScore : public BattlegroundScore
+struct TC_GAME_API ArenaTeamScore
 {
-    friend class Arena;
+    ArenaTeamScore();
+    virtual ~ArenaTeamScore();
 
-    protected:
-        ArenaScore(uint64 playerGuid, uint32 team) : BattlegroundScore(playerGuid), TeamId(team == ALLIANCE ? BG_TEAM_ALLIANCE : BG_TEAM_HORDE) { }
+    void Assign(uint32 preMatchRating, uint32 postMatchRating, uint32 preMatchMMR, uint32 postMatchMMR);
 
-        void AppendToPacket(WorldPacket& data) final override
-        {
-            data << uint64(PlayerGuid);
-
-            data << uint32(KillingBlows);
-            data << uint8(TeamId);
-            data << uint32(DamageDone);
-            data << uint32(HealingDone);
-
-            BuildObjectivesBlock(data);
-        }
-
-        void BuildObjectivesBlock(WorldPacket& data) final override
-        {
-            data << uint32(0); // Objectives Count
-        }
-
-        // For Logging purpose
-        std::string ToString() const override
-        {
-            std::ostringstream stream;
-            stream << "Damage done: " << DamageDone << ", Healing done: " << HealingDone << ", Killing blows: " << KillingBlows;
-            return stream.str();
-        }
-
-        uint8 TeamId; // BattlegroundTeamId
-};
-
-struct ArenaTeamScore
-{
-    friend class Arena;
-    friend class Battleground;
-
-    protected:
-        ArenaTeamScore() : RatingChange(0), MatchmakerRating(0) { }
-
-        virtual ~ArenaTeamScore() { }
-
-        void Reset()
-        {
-            RatingChange = 0;
-            MatchmakerRating = 0;
-            TeamName.clear();
-        }
-
-        void Assign(int32 ratingChange, uint32 matchMakerRating, std::string const& teamName)
-        {
-            RatingChange = ratingChange;
-            MatchmakerRating = matchMakerRating;
-            TeamName = teamName;
-        }
-
-        void BuildRatingInfoBlock(WorldPacket& data)
-        {
-            uint32 ratingLost = std::abs(std::min(RatingChange, 0));
-            uint32 ratingWon = std::max(RatingChange, 0);
-
-            // should be old rating, new rating, and client will calculate rating change itself
-            data << uint32(ratingLost);
-            data << uint32(ratingWon);
-            data << uint32(MatchmakerRating);
-        }
-
-        void BuildTeamInfoBlock(WorldPacket& data)
-        {
-            data << TeamName;
-        }
-
-        int32 RatingChange;
-        uint32 MatchmakerRating;
-        std::string TeamName;
+    uint32 PreMatchRating = 0;
+    uint32 PostMatchRating = 0;
+    uint32 PreMatchMMR = 0;
+    uint32 PostMatchMMR = 0;
 };
 
 #endif // TRINITY_ARENA_SCORE_H

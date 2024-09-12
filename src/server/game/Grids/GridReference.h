@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2005-2009 MaNGOS <http://getmangos.com/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -25,9 +24,10 @@ template<class OBJECT>
 class GridRefManager;
 
 template<class OBJECT>
-class GridReference : public Reference<GridRefManager<OBJECT>, OBJECT>
+class GridReference : public Reference<GridRefManager<OBJECT>, OBJECT, GridReference<OBJECT>>
 {
     protected:
+        friend Reference<GridRefManager<OBJECT>, OBJECT, GridReference<OBJECT>>;
         void targetObjectBuildLink()
         {
             // called from link()
@@ -45,9 +45,7 @@ class GridReference : public Reference<GridRefManager<OBJECT>, OBJECT>
             this->getTarget()->decSize();
         }
     public:
-        GridReference() : Reference<GridRefManager<OBJECT>, OBJECT>() { }
+        GridReference() = default;
         ~GridReference() { this->unlink(); }
-        GridReference* next() { return (GridReference*)Reference<GridRefManager<OBJECT>, OBJECT>::next(); }
 };
 #endif
-

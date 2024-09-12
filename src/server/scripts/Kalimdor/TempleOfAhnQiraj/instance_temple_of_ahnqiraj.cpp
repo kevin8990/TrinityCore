@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
- * Copyright (C) 2006-2009 ScriptDev2 <https://scriptdev2.svn.sourceforge.net/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -27,10 +26,43 @@ EndScriptData */
 #include "InstanceScript.h"
 #include "temple_of_ahnqiraj.h"
 
+ObjectData const creatureData[] =
+{
+    { NPC_VEM,       DATA_VEM       },
+    { NPC_KRI,       DATA_KRI       },
+    { NPC_VEKLOR,    DATA_VEKLOR    },
+    { NPC_VEKNILASH, DATA_VEKNILASH },
+    { NPC_VISCIDUS,  DATA_VISCIDUS  },
+    { NPC_SARTURA,   DATA_SARTURA   },
+    { 0,             0              } // END
+};
+
+DoorData const doorData[] =
+{
+    { AQ40_DOOR_1, DATA_SARTURA,       EncounterDoorBehavior::OpenWhenDone },
+    { AQ40_DOOR_1, DATA_HUHURAN,       EncounterDoorBehavior::OpenWhenDone },
+    { AQ40_DOOR_2, DATA_TWIN_EMPERORS, EncounterDoorBehavior::OpenWhenDone },
+    { AQ40_DOOR_3, DATA_SKERAM,        EncounterDoorBehavior::OpenWhenDone },
+    { 0,           0,                  EncounterDoorBehavior::OpenWhenNotInProgress } // END
+};
+
+DungeonEncounterData const encounters[] =
+{
+    { DATA_SKERAM, {{ 709 }} },
+    { DATA_SARTURA, {{ 711 }} },
+    { DATA_FRANKRIS, {{ 712 }} },
+    { DATA_HUHURAN, {{ 714 }} },
+    { DATA_TWIN_EMPERORS, {{ 715 }} },
+    { DATA_CTHUN, {{ 717 }} },
+    { DATA_BUG_TRIO, {{ 710 }} },
+    { DATA_VISCIDUS, {{ 713 }} },
+    { DATA_OURO, {{ 716 }} }
+};
+
 class instance_temple_of_ahnqiraj : public InstanceMapScript
 {
     public:
-        instance_temple_of_ahnqiraj() : InstanceMapScript("instance_temple_of_ahnqiraj", 531) { }
+        instance_temple_of_ahnqiraj() : InstanceMapScript(AQ40ScriptName, 531) { }
 
         InstanceScript* GetInstanceScript(InstanceMap* map) const override
         {
@@ -39,65 +71,28 @@ class instance_temple_of_ahnqiraj : public InstanceMapScript
 
         struct instance_temple_of_ahnqiraj_InstanceMapScript : public InstanceScript
         {
-            instance_temple_of_ahnqiraj_InstanceMapScript(Map* map) : InstanceScript(map) { }
-
-            //If Vem is dead...
-            bool IsBossDied[3];
-
-            //Storing Skeram, Vem and Kri.
-            uint64 SkeramGUID;
-            uint64 VemGUID;
-            uint64 KriGUID;
-            uint64 VeklorGUID;
-            uint64 VeknilashGUID;
-            uint64 ViscidusGUID;
-
-            uint32 BugTrioDeathCount;
-
-            uint32 CthunPhase;
-
-            void Initialize() override
+            instance_temple_of_ahnqiraj_InstanceMapScript(InstanceMap* map) : InstanceScript(map)
             {
+                SetHeaders(DataHeader);
+                LoadObjectData(creatureData, nullptr);
+                SetBossNumber(EncounterCount);
+                LoadDoorData(doorData);
+                LoadDungeonEncounterData(encounters);
                 IsBossDied[0] = false;
                 IsBossDied[1] = false;
                 IsBossDied[2] = false;
-
-                SkeramGUID = 0;
-                VemGUID = 0;
-                KriGUID = 0;
-                VeklorGUID = 0;
-                VeknilashGUID = 0;
-                ViscidusGUID = 0;
 
                 BugTrioDeathCount = 0;
 
                 CthunPhase = 0;
             }
 
-            void OnCreatureCreate(Creature* creature) override
-            {
-                switch (creature->GetEntry())
-                {
-                case NPC_SKERAM:
-                    SkeramGUID = creature->GetGUID();
-                    break;
-                case NPC_VEM:
-                    VemGUID = creature->GetGUID();
-                    break;
-                case NPC_KRI:
-                    KriGUID = creature->GetGUID();
-                    break;
-                case NPC_VEKLOR:
-                    VeklorGUID = creature->GetGUID();
-                    break;
-                case NPC_VEKNILASH:
-                    VeknilashGUID = creature->GetGUID();
-                    break;
-                case NPC_VISCIDUS:
-                    ViscidusGUID = creature->GetGUID();
-                    break;
-                }
-            }
+            //If Vem is dead...
+            bool IsBossDied[3];
+
+            uint32 BugTrioDeathCount;
+
+            uint32 CthunPhase;
 
             bool IsEncounterInProgress() const override
             {
@@ -109,73 +104,54 @@ class instance_temple_of_ahnqiraj : public InstanceMapScript
             {
                 switch (type)
                 {
-                case DATA_VEMISDEAD:
-                    if (IsBossDied[0])
-                        return 1;
-                    break;
+                    case DATA_VEMISDEAD:
+                        if (IsBossDied[0])
+                            return 1;
+                        break;
 
-                case DATA_VEKLORISDEAD:
-                    if (IsBossDied[1])
-                        return 1;
-                    break;
+                    case DATA_VEKLORISDEAD:
+                        if (IsBossDied[1])
+                            return 1;
+                        break;
 
-                case DATA_VEKNILASHISDEAD:
-                    if (IsBossDied[2])
-                        return 1;
-                    break;
+                    case DATA_VEKNILASHISDEAD:
+                        if (IsBossDied[2])
+                            return 1;
+                        break;
 
-                case DATA_BUG_TRIO_DEATH:
-                    return BugTrioDeathCount;
+                    case DATA_BUG_TRIO_DEATH:
+                        return BugTrioDeathCount;
 
-                case DATA_CTHUN_PHASE:
-                    return CthunPhase;
+                    case DATA_CTHUN_PHASE:
+                        return CthunPhase;
                 }
                 return 0;
             }
-
-            uint64 GetData64(uint32 identifier) const override
-            {
-                switch (identifier)
-                {
-                case DATA_SKERAM:
-                    return SkeramGUID;
-                case DATA_VEM:
-                    return VemGUID;
-                case DATA_KRI:
-                    return KriGUID;
-                case DATA_VEKLOR:
-                    return VeklorGUID;
-                case DATA_VEKNILASH:
-                    return VeknilashGUID;
-                case DATA_VISCIDUS:
-                    return ViscidusGUID;
-                }
-                return 0;
-            }                                                       // end GetData64
 
             void SetData(uint32 type, uint32 data) override
             {
                 switch (type)
                 {
-                case DATA_VEM_DEATH:
-                    IsBossDied[0] = true;
-                    break;
+                    case DATA_VEM_DEATH:
+                        IsBossDied[0] = true;
+                        break;
 
-                case DATA_BUG_TRIO_DEATH:
-                    ++BugTrioDeathCount;
-                    break;
+                    case DATA_BUG_TRIO_DEATH:
+                        if (++BugTrioDeathCount >= 3)
+                            SetBossState(DATA_BUG_TRIO, DONE);
+                        break;
 
-                case DATA_VEKLOR_DEATH:
-                    IsBossDied[1] = true;
-                    break;
+                    case DATA_VEKLOR_DEATH:
+                        IsBossDied[1] = true;
+                        break;
 
-                case DATA_VEKNILASH_DEATH:
-                    IsBossDied[2] = true;
-                    break;
+                    case DATA_VEKNILASH_DEATH:
+                        IsBossDied[2] = true;
+                        break;
 
-                case DATA_CTHUN_PHASE:
-                    CthunPhase = data;
-                    break;
+                    case DATA_CTHUN_PHASE:
+                        CthunPhase = data;
+                        break;
                 }
             }
         };

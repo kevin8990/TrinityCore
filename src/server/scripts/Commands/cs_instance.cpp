@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2014 TrinityCore <http://www.trinitycore.org/>
+ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -24,166 +24,232 @@ EndScriptData */
 
 #include "ScriptMgr.h"
 #include "Chat.h"
+#include "ChatCommand.h"
+#include "DB2Stores.h"
+#include "GameTime.h"
 #include "Group.h"
-#include "InstanceSaveMgr.h"
+#include "InstanceLockMgr.h"
 #include "InstanceScript.h"
+#include "Language.h"
+#include "Map.h"
 #include "MapManager.h"
 #include "Player.h"
+#include "RBAC.h"
+#include "Util.h"
+#include "World.h"
+#include "WorldSession.h"
+#include <sstream>
+
+using namespace Trinity::ChatCommands;
 
 class instance_commandscript : public CommandScript
 {
 public:
     instance_commandscript() : CommandScript("instance_commandscript") { }
 
-    ChatCommand* GetCommands() const override
+    ChatCommandTable GetCommands() const override
     {
-        static ChatCommand instanceCommandTable[] =
+        static ChatCommandTable instanceCommandTable =
         {
-            { "listbinds", rbac::RBAC_PERM_COMMAND_INSTANCE_LISTBINDS, false, &HandleInstanceListBindsCommand,    "", NULL },
-            { "unbind",    rbac::RBAC_PERM_COMMAND_INSTANCE_UNBIND,    false, &HandleInstanceUnbindCommand,       "", NULL },
-            { "stats",     rbac::RBAC_PERM_COMMAND_INSTANCE_STATS,      true, &HandleInstanceStatsCommand,        "", NULL },
-            { "savedata",  rbac::RBAC_PERM_COMMAND_INSTANCE_SAVEDATA,  false, &HandleInstanceSaveDataCommand,     "", NULL },
-            { NULL,        0,                                    false, NULL,                               "", NULL }
+            { "listbinds",    HandleInstanceListBindsCommand,    rbac::RBAC_PERM_COMMAND_INSTANCE_LISTBINDS,      Console::No },
+            { "unbind",       HandleInstanceUnbindCommand,       rbac::RBAC_PERM_COMMAND_INSTANCE_UNBIND,         Console::No },
+            { "stats",        HandleInstanceStatsCommand,        rbac::RBAC_PERM_COMMAND_INSTANCE_STATS,          Console::Yes },
+            { "setbossstate", HandleInstanceSetBossStateCommand, rbac::RBAC_PERM_COMMAND_INSTANCE_SET_BOSS_STATE, Console::Yes },
+            { "getbossstate", HandleInstanceGetBossStateCommand, rbac::RBAC_PERM_COMMAND_INSTANCE_GET_BOSS_STATE, Console::Yes },
         };
 
-        static ChatCommand commandTable[] =
+        static ChatCommandTable commandTable =
         {
-            { "instance", rbac::RBAC_PERM_COMMAND_INSTANCE,  true, NULL, "", instanceCommandTable },
-            { NULL,       0,                          false, NULL, "", NULL }
+            { "instance", instanceCommandTable },
         };
 
         return commandTable;
     }
 
-    static std::string GetTimeString(uint64 time)
-    {
-        uint64 days = time / DAY, hours = (time % DAY) / HOUR, minute = (time % HOUR) / MINUTE;
-        std::ostringstream ss;
-        if (days)
-            ss << days << "d ";
-        if (hours)
-            ss << hours << "h ";
-        ss << minute << 'm';
-        return ss.str();
-    }
-
-    static bool HandleInstanceListBindsCommand(ChatHandler* handler, char const* /*args*/)
+    static bool HandleInstanceListBindsCommand(ChatHandler* handler)
     {
         Player* player = handler->getSelectedPlayer();
         if (!player)
             player = handler->GetSession()->GetPlayer();
 
-        uint32 counter = 0;
-        for (uint8 i = 0; i < MAX_DIFFICULTY; ++i)
+        InstanceResetTimePoint now = GameTime::GetTime<InstanceResetTimePoint::clock>();
+        std::vector<InstanceLock const*> instanceLocks = sInstanceLockMgr.GetInstanceLocksForPlayer(player->GetGUID());
+        for (InstanceLock const* instanceLock : instanceLocks)
         {
-            Player::BoundInstancesMap &binds = player->GetBoundInstances(Difficulty(i));
-            for (Player::BoundInstancesMap::const_iterator itr = binds.begin(); itr != binds.end(); ++itr)
-            {
-                InstanceSave* save = itr->second.save;
-                std::string timeleft = GetTimeString(save->GetResetTime() - time(NULL));
-                handler->PSendSysMessage("map: %d inst: %d perm: %s diff: %d canReset: %s TTR: %s", itr->first, save->GetInstanceId(), itr->second.perm ? "yes" : "no",  save->GetDifficulty(), save->CanReset() ? "yes" : "no", timeleft.c_str());
-                counter++;
-            }
+            MapDb2Entries entries{ instanceLock->GetMapId(), instanceLock->GetDifficultyId() };
+            std::string timeleft = !instanceLock->IsExpired() ? secsToTimeString(std::chrono::duration_cast<Seconds>(instanceLock->GetEffectiveExpiryTime() - now).count()) : "-";
+            handler->PSendSysMessage(LANG_COMMAND_LIST_BIND_INFO,
+                entries.Map->ID, entries.Map->MapName[sWorld->GetDefaultDbcLocale()],
+                uint32(entries.MapDifficulty->DifficultyID), sDifficultyStore.AssertEntry(entries.MapDifficulty->DifficultyID)->Name[sWorld->GetDefaultDbcLocale()],
+                instanceLock->GetInstanceId(),
+                handler->GetTrinityString(instanceLock->IsExpired() ? LANG_YES : LANG_NO),
+                handler->GetTrinityString(instanceLock->IsExtended() ? LANG_YES : LANG_NO),
+                timeleft.c_str());
         }
-        handler->PSendSysMessage("player binds: %d", counter);
 
-        counter = 0;
-        if (Group* group = player->GetGroup())
-        {
-            for (uint8 i = 0; i < MAX_DIFFICULTY; ++i)
-            {
-                Group::BoundInstancesMap &binds = group->GetBoundInstances(Difficulty(i));
-                for (Group::BoundInstancesMap::const_iterator itr = binds.begin(); itr != binds.end(); ++itr)
-                {
-                    InstanceSave* save = itr->second.save;
-                    std::string timeleft = GetTimeString(save->GetResetTime() - time(NULL));
-                    handler->PSendSysMessage("map: %d inst: %d perm: %s diff: %d canReset: %s TTR: %s", itr->first, save->GetInstanceId(), itr->second.perm ? "yes" : "no",  save->GetDifficulty(), save->CanReset() ? "yes" : "no", timeleft.c_str());
-                    counter++;
-                }
-            }
-        }
-        handler->PSendSysMessage("group binds: %d", counter);
-
+        handler->PSendSysMessage(LANG_COMMAND_LIST_BIND_PLAYER_BINDS, uint32(instanceLocks.size()));
         return true;
     }
 
-    static bool HandleInstanceUnbindCommand(ChatHandler* handler, char const* args)
+    static bool HandleInstanceUnbindCommand(ChatHandler* handler, Variant<uint32, EXACT_SEQUENCE("all")> mapArg, Optional<uint32> difficultyArg)
     {
-        if (!*args)
-            return false;
-
         Player* player = handler->getSelectedPlayer();
         if (!player)
             player = handler->GetSession()->GetPlayer();
 
-        char* map = strtok((char*)args, " ");
-        char* pDiff = strtok(NULL, " ");
-        int8 diff = -1;
-        if (pDiff)
-            diff = atoi(pDiff);
-        uint16 counter = 0;
-        uint16 MapId = 0;
+        Optional<uint32> mapId;
+        Optional<Difficulty> difficulty;
 
-        if (strcmp(map, "all"))
+        if (mapArg.holds_alternative<uint32>())
+            mapId = mapArg.get<uint32>();
+
+        if (difficultyArg && sDifficultyStore.LookupEntry(*difficultyArg))
+            difficulty = Difficulty(*difficultyArg);
+
+        std::vector<InstanceLock const*> locksReset;
+        std::vector<InstanceLock const*> locksNotReset;
+
+        sInstanceLockMgr.ResetInstanceLocksForPlayer(player->GetGUID(), mapId, difficulty, &locksReset, &locksNotReset);
+
+        InstanceResetTimePoint now = GameTime::GetTime<InstanceResetTimePoint::clock>();
+        for (InstanceLock const* instanceLock : locksReset)
         {
-            MapId = uint16(atoi(map));
-            if (!MapId)
-                return false;
+            MapDb2Entries entries{ instanceLock->GetMapId(), instanceLock->GetDifficultyId() };
+            std::string timeleft = !instanceLock->IsExpired() ? secsToTimeString(std::chrono::duration_cast<Seconds>(instanceLock->GetEffectiveExpiryTime() - now).count()) : "-";
+            handler->PSendSysMessage(LANG_COMMAND_INST_UNBIND_UNBINDING,
+                entries.Map->ID, entries.Map->MapName[sWorld->GetDefaultDbcLocale()],
+                uint32(entries.MapDifficulty->DifficultyID), sDifficultyStore.AssertEntry(entries.MapDifficulty->DifficultyID)->Name[sWorld->GetDefaultDbcLocale()],
+                instanceLock->GetInstanceId(),
+                handler->GetTrinityString(instanceLock->IsExpired() ? LANG_YES : LANG_NO),
+                handler->GetTrinityString(instanceLock->IsExtended() ? LANG_YES : LANG_NO),
+                timeleft.c_str());
         }
 
-        for (uint8 i = 0; i < MAX_DIFFICULTY; ++i)
+        handler->PSendSysMessage(LANG_COMMAND_INST_UNBIND_UNBOUND, uint32(locksReset.size()));
+
+        for (InstanceLock const* instanceLock : locksNotReset)
         {
-            Player::BoundInstancesMap &binds = player->GetBoundInstances(Difficulty(i));
-            for (Player::BoundInstancesMap::iterator itr = binds.begin(); itr != binds.end();)
-            {
-                InstanceSave* save = itr->second.save;
-                if (itr->first != player->GetMapId() && (!MapId || MapId == itr->first) && (diff == -1 || diff == save->GetDifficulty()))
-                {
-                    std::string timeleft = GetTimeString(save->GetResetTime() - time(NULL));
-                    handler->PSendSysMessage("unbinding map: %d inst: %d perm: %s diff: %d canReset: %s TTR: %s", itr->first, save->GetInstanceId(), itr->second.perm ? "yes" : "no", save->GetDifficulty(), save->CanReset() ? "yes" : "no", timeleft.c_str());
-                    player->UnbindInstance(itr, Difficulty(i));
-                    counter++;
-                }
-                else
-                    ++itr;
-            }
+            MapDb2Entries entries{ instanceLock->GetMapId(), instanceLock->GetDifficultyId() };
+            std::string timeleft = !instanceLock->IsExpired() ? secsToTimeString(std::chrono::duration_cast<Seconds>(instanceLock->GetEffectiveExpiryTime() - now).count()) : "-";
+            handler->PSendSysMessage(LANG_COMMAND_INST_UNBIND_FAILED,
+                entries.Map->ID, entries.Map->MapName[sWorld->GetDefaultDbcLocale()],
+                uint32(entries.MapDifficulty->DifficultyID), sDifficultyStore.AssertEntry(entries.MapDifficulty->DifficultyID)->Name[sWorld->GetDefaultDbcLocale()],
+                instanceLock->GetInstanceId(),
+                handler->GetTrinityString(instanceLock->IsExpired() ? LANG_YES : LANG_NO),
+                handler->GetTrinityString(instanceLock->IsExtended() ? LANG_YES : LANG_NO),
+                timeleft.c_str());
         }
-        handler->PSendSysMessage("instances unbound: %d", counter);
+
+        player->SendRaidInfo();
 
         return true;
     }
 
-    static bool HandleInstanceStatsCommand(ChatHandler* handler, char const* /*args*/)
+    static bool HandleInstanceStatsCommand(ChatHandler* handler)
     {
-        handler->PSendSysMessage("instances loaded: %d", sMapMgr->GetNumInstances());
-        handler->PSendSysMessage("players in instances: %d", sMapMgr->GetNumPlayersInInstances());
-        handler->PSendSysMessage("instance saves: %d", sInstanceSaveMgr->GetNumInstanceSaves());
-        handler->PSendSysMessage("players bound: %d", sInstanceSaveMgr->GetNumBoundPlayersTotal());
-        handler->PSendSysMessage("groups bound: %d", sInstanceSaveMgr->GetNumBoundGroupsTotal());
+        handler->PSendSysMessage(LANG_COMMAND_INST_STAT_LOADED_INST, sMapMgr->GetNumInstances());
+        handler->PSendSysMessage(LANG_COMMAND_INST_STAT_PLAYERS_IN, sMapMgr->GetNumPlayersInInstances());
+
+        InstanceLocksStatistics statistics = sInstanceLockMgr.GetStatistics();
+
+        handler->PSendSysMessage(LANG_COMMAND_INST_STAT_SAVES, statistics.InstanceCount);
+        handler->PSendSysMessage(LANG_COMMAND_INST_STAT_PLAYERSBOUND, statistics.PlayerCount);
 
         return true;
     }
 
-    static bool HandleInstanceSaveDataCommand(ChatHandler* handler, char const* /*args*/)
+    static bool HandleInstanceSetBossStateCommand(ChatHandler* handler, uint32 encounterId, EncounterState state, Optional<PlayerIdentifier> player)
     {
-        Player* player = handler->GetSession()->GetPlayer();
-        Map* map = player->GetMap();
-        if (!map->IsDungeon())
+        // Character name must be provided when using this from console.
+        if (!player && !handler->GetSession())
         {
-            handler->PSendSysMessage("Map is not a dungeon.");
+            handler->PSendSysMessage(LANG_CMD_SYNTAX);
             handler->SetSentErrorMessage(true);
             return false;
         }
 
-        if (!((InstanceMap*)map)->GetInstanceScript())
+        if (!player)
+            player = PlayerIdentifier::FromSelf(handler);
+
+        if (!player->IsConnected())
         {
-            handler->PSendSysMessage("Map has no instance data.");
+            handler->PSendSysMessage(LANG_PLAYER_NOT_FOUND);
             handler->SetSentErrorMessage(true);
             return false;
         }
 
-        ((InstanceMap*)map)->GetInstanceScript()->SaveToDB();
+        InstanceMap* map = player->GetConnectedPlayer()->GetMap()->ToInstanceMap();
+        if (!map)
+        {
+            handler->PSendSysMessage(LANG_NOT_DUNGEON);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
 
+        if (!map->GetInstanceScript())
+        {
+            handler->PSendSysMessage(LANG_NO_INSTANCE_DATA);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        // Reject improper values.
+        if (encounterId > map->GetInstanceScript()->GetEncounterCount())
+        {
+            handler->PSendSysMessage(LANG_BAD_VALUE);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        map->GetInstanceScript()->SetBossState(encounterId, state);
+        handler->PSendSysMessage(LANG_COMMAND_INST_SET_BOSS_STATE, encounterId, state, EnumUtils::ToConstant(state));
+        return true;
+    }
+
+    static bool HandleInstanceGetBossStateCommand(ChatHandler* handler, uint32 encounterId, Optional<PlayerIdentifier> player)
+    {
+        // Character name must be provided when using this from console.
+        if (!player && !handler->GetSession())
+        {
+            handler->PSendSysMessage(LANG_CMD_SYNTAX);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (!player)
+            player = PlayerIdentifier::FromSelf(handler);
+
+        if (!player->IsConnected())
+        {
+            handler->PSendSysMessage(LANG_PLAYER_NOT_FOUND);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        InstanceMap* map = player->GetConnectedPlayer()->GetMap()->ToInstanceMap();
+        if (!map)
+        {
+            handler->PSendSysMessage(LANG_NOT_DUNGEON);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (!map->GetInstanceScript())
+        {
+            handler->PSendSysMessage(LANG_NO_INSTANCE_DATA);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (encounterId > map->GetInstanceScript()->GetEncounterCount())
+        {
+            handler->PSendSysMessage(LANG_BAD_VALUE);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        EncounterState state = map->GetInstanceScript()->GetBossState(encounterId);
+        handler->PSendSysMessage(LANG_COMMAND_INST_GET_BOSS_STATE, encounterId, state, EnumUtils::ToConstant(state));
         return true;
     }
 };
